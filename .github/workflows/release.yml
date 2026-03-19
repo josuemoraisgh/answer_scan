@@ -1,0 +1,183 @@
+name: Build & Release (Android) - answer_scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versão/Tag (ex.: v1.0.0)"
+        required: true
+        type: string
+      prerelease:
+        description: "Marcar como pré-release?"
+        required: false
+        default: false
+        type: boolean
+      notes:
+        description: "Notas da release (opcional)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  VERSION: ${{ github.event.inputs.version }}
+  FLUTTER_VERSION: "3.32.0"
+  APK_NAME: answer_scan-${{ github.event.inputs.version }}-android.apk
+
+jobs:
+  build-android:
+    name: Android (Flutter + APK Release)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validar versão
+        run: |
+          if [ -z "$VERSION" ]; then
+            echo "❌ Versão não informada"
+            exit 1
+          fi
+          echo "✅ Versão/Tag: $VERSION"
+
+      - name: Verificar estrutura do projeto
+        run: |
+          echo "Verificando arquivos do projeto..."
+          if [ ! -f "pubspec.yaml" ]; then
+            echo "❌ pubspec.yaml não encontrado"
+            exit 1
+          fi
+          if [ ! -d "android" ]; then
+            echo "❌ Pasta android/ não encontrada"
+            exit 1
+          fi
+          if [ ! -d "lib" ]; then
+            echo "❌ Pasta lib/ não encontrada"
+            exit 1
+          fi
+          echo "✅ Estrutura do projeto OK"
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: "stable"
+          cache: true
+
+      - name: Verificar versões instaladas
+        run: |
+          echo "Flutter:"
+          flutter --version
+          echo ""
+          echo "Dart:"
+          dart --version
+          echo ""
+          echo "Java:"
+          java -version
+
+      - name: Instalar dependências
+        run: |
+          echo "Executando flutter pub get..."
+          flutter pub get
+          echo "✅ Dependências instaladas"
+
+      - name: Analisar código
+        run: |
+          echo "Analisando código..."
+          flutter analyze --no-fatal-infos || true
+          echo "✅ Análise concluída"
+
+      - name: Atualizar versão no pubspec.yaml
+        run: |
+          VERSION_CLEAN="${VERSION#v}"
+          BUILD_NUMBER="${GITHUB_RUN_NUMBER}"
+          echo "Atualizando versão para: $VERSION_CLEAN+$BUILD_NUMBER"
+          sed -i "s/^version: .*/version: ${VERSION_CLEAN}+${BUILD_NUMBER}/" pubspec.yaml
+          echo "✅ pubspec.yaml atualizado"
+          grep "^version:" pubspec.yaml
+
+      - name: Compilar APK Release
+        run: |
+          echo "Compilando APK release..."
+          flutter build apk --release \
+            --build-name="${VERSION#v}" \
+            --build-number="${GITHUB_RUN_NUMBER}"
+          echo "✅ Compilação concluída"
+
+      - name: Localizar APK gerado
+        id: find-apk
+        run: |
+          echo "Procurando APK..."
+          APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "❌ APK não encontrado no caminho esperado"
+            echo "Procurando em toda a pasta build..."
+            find build -name "*.apk" 2>/dev/null
+            exit 1
+          fi
+          APK_SIZE=$(du -sh "$APK_PATH" | cut -f1)
+          echo "✅ APK encontrado: $APK_PATH ($APK_SIZE)"
+          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+
+      - name: Renomear APK para release
+        run: |
+          mkdir -p release
+          cp "${{ steps.find-apk.outputs.apk_path }}" "release/$APK_NAME"
+          echo "✅ APK renomeado: $APK_NAME"
+          ls -lh release/
+
+      - name: Verificação final do pacote
+        run: |
+          echo "=== Verificação final ==="
+          APK_FILE="release/$APK_NAME"
+          if [ -f "$APK_FILE" ]; then
+            SIZE=$(du -sh "$APK_FILE" | cut -f1)
+            echo "✅ $APK_NAME ($SIZE)"
+          else
+            echo "❌ APK ausente: $APK_FILE"
+            exit 1
+          fi
+
+      - name: Upload artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: answer_scan-${{ env.VERSION }}-android
+          path: release/${{ env.APK_NAME }}
+          if-no-files-found: error
+
+      - name: Criar Release no GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: answer_scan ${{ env.VERSION }} (Android)
+          body: |
+            ${{ github.event.inputs.notes }}
+
+            ## 📦 Download
+            - **Android APK**: `${{ env.APK_NAME }}`
+
+            ## 📱 Requisitos
+            - Android 5.0+ (API 21)
+            - Permissão de câmera necessária para uso do scanner
+
+            ## ⚙️ Build Info
+            - Flutter: ${{ env.FLUTTER_VERSION }}
+            - Build number: ${{ github.run_number }}
+            - Commit: ${{ github.sha }}
+
+            ## 📝 Changelog
+            Veja as mudanças nesta versão nos commits abaixo.
+          prerelease: ${{ github.event.inputs.prerelease }}
+          files: release/${{ env.APK_NAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
