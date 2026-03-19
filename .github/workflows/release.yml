@@ -22,7 +22,7 @@ permissions:
 
 env:
   VERSION: ${{ github.event.inputs.version }}
-  FLUTTER_VERSION: "3.32.0"
+  FLUTTER_VERSION: "3.41.5"
   APK_NAME: answer_scan-${{ github.event.inputs.version }}-android.apk
 
 jobs:

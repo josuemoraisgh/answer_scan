@@ -129,15 +129,29 @@ class MoodleService {
         await _submitViaAssign(baseUrl, token, item, studentId, grade);
       } on MoodleException catch (e) {
         if (_isServiceError(e.errorCode ?? '')) rethrow;
-        // Fallback: update directly in the gradebook (equivalent to UI edit mode)
-        await _submitViaGradeUpdate(
-          baseUrl,
-          token,
-          courseId,
-          item,
-          studentId,
-          grade,
-        );
+        // Fallback 1: update directly in the gradebook (equivalent to UI edit mode)
+        try {
+          await _submitViaGradeUpdate(
+            baseUrl,
+            token,
+            courseId,
+            item,
+            studentId,
+            grade,
+          );
+        } on MoodleException catch (e2) {
+          if (_isServiceError(e2.errorCode ?? '')) rethrow;
+          // Fallback 2: grade item import — works when student has no submission
+          // and core_grades_update_grades also returns invalidrecordunknown.
+          await _submitManualItem(
+            baseUrl,
+            token,
+            courseId,
+            item,
+            studentId,
+            grade,
+          );
+        }
       }
     } else if (item.itemType == 'mod') {
       await _submitViaGradeUpdate(
@@ -332,6 +346,11 @@ class MoodleService {
       case 'nopermissions':
         return 'Sem permissão para editar notas neste curso.\n'
             'Verifique se você tem o papel de Professor com edição.';
+      case 'invalidrecordunknown':
+        return 'Não foi possível registrar a nota: o aluno ou item de avaliação '
+            'não foi encontrado no Moodle.\n'
+            'Verifique se o aluno está matriculado no curso e se a atividade '
+            'existe no Moodle.';
       case 'servicenotavailable':
         return 'Serviço "$original" não encontrado no Moodle.\n'
             'Verifique o nome do serviço nas configurações avançadas.';
