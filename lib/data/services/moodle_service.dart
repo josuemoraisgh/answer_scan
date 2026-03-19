@@ -47,8 +47,9 @@ class MoodleService {
     }
     final token = data['token'] as String;
 
-    final info = await _ws(baseUrl, token, 'core_webservice_get_site_info')
-        as Map<String, dynamic>;
+    final info =
+        await _ws(baseUrl, token, 'core_webservice_get_site_info')
+            as Map<String, dynamic>;
     return (token, info['userid'] as int, (info['fullname'] as String?) ?? '');
   }
 
@@ -57,12 +58,11 @@ class MoodleService {
     required String token,
     required int userId,
   }) async {
-    final data = await _ws(
-      baseUrl,
-      token,
-      'core_enrol_get_users_courses',
-      {'userid': '$userId'},
-    ) as List<dynamic>;
+    final data =
+        await _ws(baseUrl, token, 'core_enrol_get_users_courses', {
+              'userid': '$userId',
+            })
+            as List<dynamic>;
     return data
         .map((e) => MoodleCourse.fromJson(e as Map<String, dynamic>))
         .toList();
@@ -75,12 +75,12 @@ class MoodleService {
     required int courseId,
     required int userId,
   }) async {
-    final data = await _ws(
-      baseUrl,
-      token,
-      'gradereport_user_get_grade_items',
-      {'courseid': '$courseId', 'userid': '$userId'},
-    ) as Map<String, dynamic>;
+    final data =
+        await _ws(baseUrl, token, 'gradereport_user_get_grade_items', {
+              'courseid': '$courseId',
+              'userid': '$userId',
+            })
+            as Map<String, dynamic>;
 
     final usergrades = (data['usergrades'] as List?) ?? [];
     if (usergrades.isEmpty) return [];
@@ -96,12 +96,11 @@ class MoodleService {
     required String token,
     required int courseId,
   }) async {
-    final data = await _ws(
-      baseUrl,
-      token,
-      'core_enrol_get_enrolled_users',
-      {'courseid': '$courseId'},
-    ) as List<dynamic>;
+    final data =
+        await _ws(baseUrl, token, 'core_enrol_get_enrolled_users', {
+              'courseid': '$courseId',
+            })
+            as List<dynamic>;
     return data
         .map((e) => MoodleStudent.fromJson(e as Map<String, dynamic>))
         .toList();
@@ -124,9 +123,31 @@ class MoodleService {
     required double grade,
   }) async {
     if (item.itemType == 'mod' && item.itemModule == 'assign') {
-      await _submitViaAssign(baseUrl, token, item, studentId, grade);
+      // Try assign-specific API first; fall back to gradebook update if it fails
+      // (e.g. student has no submission record yet).
+      try {
+        await _submitViaAssign(baseUrl, token, item, studentId, grade);
+      } on MoodleException catch (e) {
+        if (_isServiceError(e.errorCode ?? '')) rethrow;
+        // Fallback: update directly in the gradebook (equivalent to UI edit mode)
+        await _submitViaGradeUpdate(
+          baseUrl,
+          token,
+          courseId,
+          item,
+          studentId,
+          grade,
+        );
+      }
     } else if (item.itemType == 'mod') {
-      await _submitViaGradeUpdate(baseUrl, token, courseId, item, studentId, grade);
+      await _submitViaGradeUpdate(
+        baseUrl,
+        token,
+        courseId,
+        item,
+        studentId,
+        grade,
+      );
     } else {
       // Manual item: try direct import first, then grade_update fallback.
       await _submitManualItem(baseUrl, token, courseId, item, studentId, grade);
@@ -144,17 +165,30 @@ class MoodleService {
     int studentId,
     double grade,
   ) async {
-    await _ws(baseUrl, token, 'mod_assign_save_grade', {
-      'assignmentid': '${item.itemInstance}',
-      'userid': '$studentId',
-      'grade': grade.toStringAsFixed(2),
-      'attemptnumber': '-1',
-      'addattempt': '0',
-      'workflowstate': 'graded',
-      'applytoall': '0',
-      'plugindata[assignfeedbackcomments_editor][text]': '',
-      'plugindata[assignfeedbackcomments_editor][format]': '1',
-    });
+    // Try with attemptnumber=0 first (works even when student has no submission).
+    // Fall back to attemptnumber=-1 for compatibility with older Moodle versions.
+    for (final attempt in ['0', '-1']) {
+      try {
+        await _ws(baseUrl, token, 'mod_assign_save_grade', {
+          'assignmentid': '${item.itemInstance}',
+          'userid': '$studentId',
+          'grade': grade.toStringAsFixed(2),
+          'attemptnumber': attempt,
+          'addattempt': '1',
+          'workflowstate': 'graded',
+          'applytoall': '0',
+          'plugindata[assignfeedbackcomments_editor][text]': '',
+          'plugindata[assignfeedbackcomments_editor][format]': '1',
+        });
+        return; // success
+      } on MoodleException catch (e) {
+        final code = e.errorCode ?? '';
+        // Only retry on "record not found" type errors; propagate auth/permission errors immediately.
+        if (_isServiceError(code)) rethrow;
+        if (attempt == '-1') rethrow; // last attempt, propagate
+        // else continue to next attempt value
+      }
+    }
   }
 
   Future<void> _submitViaGradeUpdate(
@@ -166,7 +200,7 @@ class MoodleService {
     double grade,
   ) async {
     await _ws(baseUrl, token, 'core_grades_update_grades', {
-      'source': 'corrigirProva',
+      'source': 'answerScan',
       'courseid': '$courseId',
       'component': 'mod_${item.itemModule}',
       'activityid': '${item.itemInstance ?? 0}',
@@ -199,7 +233,8 @@ class MoodleService {
       await _ws(baseUrl, token, 'gradeimport_direct_import_grades', {
         'courseid': '$courseId',
         'data[0][gradeitem]': '${item.id}',
-        'data[0][importcode]': 'corrigirProva_${DateTime.now().millisecondsSinceEpoch}',
+        'data[0][importcode]':
+            'answerScan_${DateTime.now().millisecondsSinceEpoch}',
         'data[0][grades][0][userid]': '$studentId',
         'data[0][grades][0][grade]': grade.toStringAsFixed(2),
         'data[0][grades][0][feedback]': '',
@@ -213,7 +248,7 @@ class MoodleService {
 
     // Strategy 2: core_grades_update_grades with component='manual'
     await _ws(baseUrl, token, 'core_grades_update_grades', {
-      'source': 'corrigirProva',
+      'source': 'answerScan',
       'courseid': '$courseId',
       'component': 'manual',
       'activityid': '0',
@@ -273,10 +308,12 @@ class MoodleService {
     final decoded = _decode(resp.body);
     if (decoded is Map && decoded.containsKey('exception')) {
       final errorCode = decoded['errorcode'] as String?;
-      final message = (decoded['message'] as String?) ??
-          decoded['exception'].toString();
-      throw MoodleException(_friendlyMessage(message, errorCode),
-          errorCode: errorCode);
+      final message =
+          (decoded['message'] as String?) ?? decoded['exception'].toString();
+      throw MoodleException(
+        _friendlyMessage(message, errorCode),
+        errorCode: errorCode,
+      );
     }
     return decoded;
   }
@@ -299,7 +336,7 @@ class MoodleService {
         return 'Serviço "$original" não encontrado no Moodle.\n'
             'Verifique o nome do serviço nas configurações avançadas.';
       default:
-        return original;
+        return errorCode != null ? '$original [$errorCode]' : original;
     }
   }
 }
