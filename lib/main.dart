@@ -3,10 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'data/repositories/sheet_reader_repository_impl.dart';
-import 'data/services/calibration_profile_store.dart';
 import 'data/services/moodle_service.dart';
 import 'data/services/moodle_session_store.dart';
-import 'data/services/omr_sheet_scanner.dart';
 import 'domain/usecases/grade_exam_usecase.dart';
 import 'presentation/controllers/correction_controller.dart';
 import 'presentation/controllers/moodle_controller.dart';
@@ -26,9 +24,6 @@ Future<void> main() async {
     return camera.lensDirection == CameraLensDirection.back;
   }).firstOrNull;
 
-  final calibrationStore = CalibrationProfileStore();
-  final calibration = await calibrationStore.load();
-  final scanner = OMRSheetScanner(defaultCalibration: calibration);
   final repository = SheetReaderRepositoryImpl();
   final useCase = GradeExamUseCase();
   final controller = CorrectionController(
@@ -47,8 +42,6 @@ Future<void> main() async {
       controller: controller,
       moodleController: moodleController,
       camera: backCamera,
-      scanner: scanner,
-      calibrationStore: calibrationStore,
     ),
   );
 }
@@ -59,15 +52,11 @@ class CorretorProvaApp extends StatelessWidget {
     required this.controller,
     required this.moodleController,
     required this.camera,
-    required this.scanner,
-    required this.calibrationStore,
   });
 
   final CorrectionController controller;
   final MoodleController moodleController;
   final CameraDescription? camera;
-  final OMRSheetScanner scanner;
-  final CalibrationProfileStore calibrationStore;
 
   @override
   Widget build(BuildContext context) {
@@ -75,14 +64,12 @@ class CorretorProvaApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Corretor de Provas',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0D6E5B)),
       ),
       home: HomePage(
         controller: controller,
         moodleController: moodleController,
         camera: camera,
-        scanner: scanner,
-        calibrationStore: calibrationStore,
       ),
     );
   }

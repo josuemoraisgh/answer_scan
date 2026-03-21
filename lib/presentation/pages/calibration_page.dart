@@ -1,48 +1,35 @@
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
-import '../../data/services/calibration_profile_store.dart';
-import '../../data/services/omr_sheet_scanner.dart';
-import '../../domain/entities/answer_option.dart';
+import '../../data/services/omr_native_channel.dart';
+import '../../domain/entities/omr_scan_result.dart';
 import 'camera_capture_page.dart';
 
 class CalibrationPage extends StatefulWidget {
-  const CalibrationPage({
-    super.key,
-    required this.camera,
-    required this.scanner,
-    required this.calibrationStore,
-  });
+  const CalibrationPage({super.key, required this.camera});
 
   final CameraDescription? camera;
-  final OMRSheetScanner scanner;
-  final CalibrationProfileStore calibrationStore;
 
   @override
   State<CalibrationPage> createState() => _CalibrationPageState();
 }
 
 class _CalibrationPageState extends State<CalibrationPage> {
-  late OMRScannerCalibration _calibration;
-  OMRScanDebugResult? _debugResult;
+  final ImagePicker _imagePicker = ImagePicker();
+
+  OmrScanResult? _scanResult;
   String? _imagePath;
   String? _error;
   bool _isBusy = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _calibration = widget.scanner.defaultCalibration;
-  }
 
   Future<void> _captureAndAnalyze() async {
     final camera = widget.camera;
     if (camera == null) {
       setState(() {
-        _error = 'Nenhuma camera disponivel para calibracao.';
+        _error = 'Nenhuma camera disponivel para diagnostico.';
       });
       return;
     }
@@ -51,8 +38,7 @@ class _CalibrationPageState extends State<CalibrationPage> {
       MaterialPageRoute(
         builder: (_) => CameraCapturePage(
           camera: camera,
-          title: 'Capturar folha para calibracao',
-          scanner: widget.scanner,
+          title: 'Capturar folha para diagnostico',
         ),
       ),
     );
@@ -61,11 +47,19 @@ class _CalibrationPageState extends State<CalibrationPage> {
       return;
     }
 
-    setState(() {
-      _imagePath = path;
-    });
+    await _analyze(path);
+  }
 
-    await _reanalyze();
+  Future<void> _pickAndAnalyze() async {
+    final file = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 100,
+    );
+    if (file == null) {
+      return;
+    }
+
+    await _analyze(file.path);
   }
 
   Future<void> _reanalyze() async {
@@ -74,23 +68,28 @@ class _CalibrationPageState extends State<CalibrationPage> {
       return;
     }
 
+    await _analyze(imagePath);
+  }
+
+  Future<void> _analyze(String imagePath) async {
     setState(() {
       _isBusy = true;
+      _imagePath = imagePath;
       _error = null;
     });
 
     try {
-      final result = await widget.scanner.scanWithDebug(
-        imagePath,
-        calibration: _calibration,
-      );
+      final result = await OmrNativeChannel.scanFull(imagePath, debug: true);
 
       if (!mounted) {
         return;
       }
 
       setState(() {
-        _debugResult = result;
+        _scanResult = result;
+        if (!result.success) {
+          _error = result.error ?? 'Falha no diagnostico.';
+        }
       });
     } catch (error) {
       if (!mounted) {
@@ -98,52 +97,10 @@ class _CalibrationPageState extends State<CalibrationPage> {
       }
 
       setState(() {
-        _error = 'Falha na calibracao: $error';
-        _debugResult = null;
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isBusy = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _updateCalibration(OMRScannerCalibration next) async {
-    setState(() {
-      _calibration = next;
-    });
-
-    await _reanalyze();
-  }
-
-  Future<void> _saveCalibrationProfile() async {
-    setState(() {
-      _isBusy = true;
-      _error = null;
-    });
-
-    try {
-      await widget.calibrationStore.save(_calibration);
-      widget.scanner.setDefaultCalibration(_calibration);
-
-      if (!mounted) {
-        return;
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Perfil de calibracao salvo com sucesso.'),
-        ),
-      );
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _error = 'Falha ao salvar perfil: $error';
+        _scanResult = null;
+        _error =
+            'Falha no diagnostico: '
+            '${error.toString().replaceFirst('OmrScanException: ', '')}';
       });
     } finally {
       if (mounted) {
@@ -156,160 +113,146 @@ class _CalibrationPageState extends State<CalibrationPage> {
 
   @override
   Widget build(BuildContext context) {
-    final result = _debugResult;
+    final result = _scanResult;
+    final debugPath = result?.debugImagePath;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Calibracao OMR')),
+      appBar: AppBar(title: const Text('Diagnostico nativo')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            FilledButton.icon(
-              onPressed: _isBusy ? null : _captureAndAnalyze,
-              icon: const Icon(Icons.photo_camera),
-              label: const Text('Capturar folha de calibracao'),
+            const Text(
+              'Executa o scanner Kotlin/OpenCV com debug habilitado para '
+              'validar marcadores, homografia, ROIs e scores.',
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _isBusy ? null : _captureAndAnalyze,
+                    icon: const Icon(Icons.photo_camera),
+                    label: const Text('Camera'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _isBusy ? null : _pickAndAnalyze,
+                    icon: const Icon(Icons.photo_library_outlined),
+                    label: const Text('Galeria'),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             OutlinedButton.icon(
               onPressed: _isBusy || _imagePath == null ? null : _reanalyze,
               icon: const Icon(Icons.refresh),
-              label: const Text('Reprocessar com parametros atuais'),
+              label: const Text('Reprocessar'),
             ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _isBusy ? null : _saveCalibrationProfile,
-              icon: const Icon(Icons.save),
-              label: const Text('Salvar perfil de calibracao'),
-            ),
-            const SizedBox(height: 16),
-            if (_imagePath != null)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: AspectRatio(
-                  aspectRatio: result?.imageAspectRatio ?? 16 / 9,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Image.file(File(_imagePath!), fit: BoxFit.fill),
-                      if (result != null)
-                        CustomPaint(
-                          painter: _CalibrationOverlayPainter(
-                            geometry: result.geometry,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
             if (_isBusy) ...[
               const SizedBox(height: 16),
               const Center(child: CircularProgressIndicator()),
             ],
             if (_error != null) ...[
-              const SizedBox(height: 12),
-              Text(_error!, style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 16),
+              _InfoCard(
+                title: 'Falha',
+                child: Text(_error!, style: const TextStyle(color: Colors.red)),
+              ),
             ],
-            const SizedBox(height: 20),
-            Text(
-              'Parametros de Calibracao',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 12),
-            _SliderSetting(
-              label: 'Ajuste do threshold',
-              valueLabel: _calibration.thresholdBias.toStringAsFixed(1),
-              value: _calibration.thresholdBias,
-              min: -35,
-              max: 35,
-              onChanged: (value) async {
-                await _updateCalibration(
-                  _calibration.copyWith(thresholdBias: value),
-                );
-              },
-            ),
-            _SliderSetting(
-              label: 'Tinta minima para considerar marcada',
-              valueLabel: _calibration.minInkScore.toStringAsFixed(3),
-              value: _calibration.minInkScore,
-              min: 0.03,
-              max: 0.20,
-              onChanged: (value) async {
-                await _updateCalibration(
-                  _calibration.copyWith(minInkScore: value),
-                );
-              },
-            ),
-            _SliderSetting(
-              label: 'Diferenca minima entre 1a e 2a opcao',
-              valueLabel: _calibration.minGap.toStringAsFixed(3),
-              value: _calibration.minGap,
-              min: 0.01,
-              max: 0.10,
-              onChanged: (value) async {
-                await _updateCalibration(_calibration.copyWith(minGap: value));
-              },
-            ),
-            _SliderSetting(
-              label: 'Margem interna da celula',
-              valueLabel: _calibration.cellInset.toStringAsFixed(2),
-              value: _calibration.cellInset,
-              min: 0.15,
-              max: 0.42,
-              onChanged: (value) async {
-                await _updateCalibration(
-                  _calibration.copyWith(cellInset: value),
-                );
-              },
-            ),
-            const SizedBox(height: 16),
             if (result != null) ...[
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
+              const SizedBox(height: 16),
+              _InfoCard(
+                title: 'Resumo da folha',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Status: ${result.sheetStatus}'),
+                    Text('Marcadores detectados: ${result.markersDetected}'),
+                    Text(
+                      'Perspectiva corrigida: '
+                      '${result.perspectiveCorrected ? 'sim' : 'nao'}',
+                    ),
+                    Text(
+                      'Confianca media: '
+                      '${(result.averageConfidence * 100).toStringAsFixed(0)}%',
+                    ),
+                    Text('Questoes para revisar: ${result.unresolvedCount}'),
+                    if (_imagePath != null)
+                      Text('Imagem: ${_basename(_imagePath!)}'),
+                  ],
+                ),
+              ),
+              if (debugPath != null && File(debugPath).existsSync()) ...[
+                const SizedBox(height: 16),
+                _InfoCard(
+                  title: 'Debug gerado',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Threshold final: ${result.threshold.toStringAsFixed(1)}',
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.file(File(debugPath), fit: BoxFit.cover),
                       ),
                       const SizedBox(height: 8),
-                      Text(
-                        'Questoes ambiguas: ${_ambiguousQuestions(result).length}',
-                      ),
-                      const SizedBox(height: 8),
-                      Text('Resumo lido: ${_summary(result)}'),
+                      Text('Arquivo: ${_basename(debugPath)}'),
                     ],
                   ),
                 ),
-              ),
-              if (_ambiguousQuestions(result).isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(
-                  'Revisao rapida das ambiguas',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _ambiguousQuestions(result).map((question) {
-                    return Chip(
-                      backgroundColor: Colors.orange.shade100,
-                      label: Text(
-                        'Q${question.questionNumber}: gap ${question.scoreGap.toStringAsFixed(3)}',
-                      ),
-                    );
-                  }).toList(),
-                ),
               ],
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
+              _InfoCard(
+                title: 'Pontos de calibracao no codigo nativo',
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('TemplateConfig.HEADER_HEIGHT_FRAC'),
+                    Text('TemplateConfig.LABEL_WIDTH_FRAC'),
+                    Text('TemplateConfig.CELL_READ_FRAC'),
+                    Text('TemplateConfig.BLANK_THRESHOLD'),
+                    Text('TemplateConfig.FILL_THRESHOLD'),
+                    Text('TemplateConfig.GAP_RATIO'),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
               Text(
                 'Diagnostico por questao',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
-              ...result.questions.map(_buildQuestionCard),
+              ...List.generate(20, (index) {
+                final question = index + 1;
+                final answer = result.rawAnswers['$question'] ?? '-';
+                final confidence = result.confidence['$question'] ?? 0;
+                final scores = result.scores['$question'] ?? const [];
+
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Q${question.toString().padLeft(2, '0')} -> $answer',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Confianca: ${(confidence * 100).toStringAsFixed(0)}%',
+                        ),
+                        const SizedBox(height: 6),
+                        Text(_formatScores(scores)),
+                      ],
+                    ),
+                  ),
+                );
+              }),
             ],
           ],
         ),
@@ -317,171 +260,49 @@ class _CalibrationPageState extends State<CalibrationPage> {
     );
   }
 
-  Widget _buildQuestionCard(OMRQuestionDebugResult question) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Q${question.questionNumber.toString().padLeft(2, '0')} -> ${question.marked?.label ?? '-'}',
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: List.generate(question.optionScores.length, (index) {
-                final label = AnswerOption.values[index].label;
-                final score = question.optionScores[index];
-                return Chip(
-                  label: Text('$label: ${score.toStringAsFixed(3)}'),
-                  backgroundColor: question.marked?.index == index
-                      ? Colors.teal.shade100
-                      : null,
-                );
-              }),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _summary(OMRScanDebugResult result) {
-    final buffer = StringBuffer();
-    for (var i = 0; i < result.questions.length; i++) {
-      final label = result.questions[i].marked?.label ?? '-';
-      buffer.write('${i + 1}:$label');
-      if (i < result.questions.length - 1) {
-        buffer.write('  ');
-      }
+  static String _formatScores(List<double> scores) {
+    const labels = ['A', 'B', 'C', 'D', 'E'];
+    if (scores.isEmpty) {
+      return 'Sem scores.';
     }
-    return buffer.toString();
+
+    final parts = <String>[];
+    for (
+      var index = 0;
+      index < scores.length && index < labels.length;
+      index++
+    ) {
+      parts.add('${labels[index]}=${scores[index].toStringAsFixed(3)}');
+    }
+    return parts.join('  ');
   }
 
-  List<OMRQuestionDebugResult> _ambiguousQuestions(OMRScanDebugResult result) {
-    return result.questions.where((question) {
-      return question.marked == null || question.scoreGap < 0.025;
-    }).toList();
+  static String _basename(String path) {
+    final parts = path.split(Platform.pathSeparator);
+    return parts.isEmpty ? path : parts.last;
   }
 }
 
-class _CalibrationOverlayPainter extends CustomPainter {
-  const _CalibrationOverlayPainter({required this.geometry});
+class _InfoCard extends StatelessWidget {
+  const _InfoCard({required this.title, required this.child});
 
-  final OMRDebugGeometry geometry;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final guidePaint = Paint()
-      ..color = Colors.white70
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    final contentPaint = Paint()
-      ..color = Colors.lightBlueAccent
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    final gridPaint = Paint()
-      ..color = Colors.greenAccent
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    final markerPaint = Paint()
-      ..color = Colors.redAccent
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    final pointPaint = Paint()
-      ..color = Colors.yellowAccent
-      ..style = PaintingStyle.fill;
-
-    canvas.drawRect(_mapRect(geometry.guideRect, size), guidePaint);
-    canvas.drawRect(_mapRect(geometry.contentRect, size), contentPaint);
-
-    for (final marker in [
-      geometry.topLeftMarker,
-      geometry.topRightMarker,
-      geometry.bottomLeftMarker,
-      geometry.bottomRightMarker,
-    ]) {
-      canvas.drawRect(_mapRect(marker, size), markerPaint);
-    }
-
-    final gridPath = Path()
-      ..moveTo(
-        geometry.gridTopLeft.x * size.width,
-        geometry.gridTopLeft.y * size.height,
-      )
-      ..lineTo(
-        geometry.gridTopRight.x * size.width,
-        geometry.gridTopRight.y * size.height,
-      )
-      ..lineTo(
-        geometry.gridBottomRight.x * size.width,
-        geometry.gridBottomRight.y * size.height,
-      )
-      ..lineTo(
-        geometry.gridBottomLeft.x * size.width,
-        geometry.gridBottomLeft.y * size.height,
-      )
-      ..close();
-    canvas.drawPath(gridPath, gridPaint);
-
-    for (final point in [
-      geometry.gridTopLeft,
-      geometry.gridTopRight,
-      geometry.gridBottomLeft,
-      geometry.gridBottomRight,
-    ]) {
-      canvas.drawCircle(
-        Offset(point.x * size.width, point.y * size.height),
-        math.max(4, size.shortestSide * 0.008),
-        pointPaint,
-      );
-    }
-  }
-
-  Rect _mapRect(OMRDebugRect rect, Size size) {
-    return Rect.fromLTRB(
-      rect.left * size.width,
-      rect.top * size.height,
-      rect.right * size.width,
-      rect.bottom * size.height,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _CalibrationOverlayPainter oldDelegate) {
-    return oldDelegate.geometry != geometry;
-  }
-}
-
-class _SliderSetting extends StatelessWidget {
-  const _SliderSetting({
-    required this.label,
-    required this.valueLabel,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.onChanged,
-  });
-
-  final String label;
-  final String valueLabel;
-  final double value;
-  final double min;
-  final double max;
-  final ValueChanged<double> onChanged;
+  final String title;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('$label: $valueLabel'),
-        Slider(value: value, min: min, max: max, onChanged: onChanged),
-      ],
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            child,
+          ],
+        ),
+      ),
     );
   }
 }

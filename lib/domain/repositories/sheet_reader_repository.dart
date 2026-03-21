@@ -1,5 +1,5 @@
-import '../entities/answer_sheet.dart';
+import '../entities/omr_scan_result.dart';
 
 abstract class SheetReaderRepository {
-  Future<AnswerSheet> readSheet(String imagePath);
+  Future<OmrScanResult> scanSheet(String imagePath, {bool debug = false});
 }

@@ -10,10 +10,10 @@ class MoodleCourse {
   final String fullname;
 
   factory MoodleCourse.fromJson(Map<String, dynamic> json) => MoodleCourse(
-        id: json['id'] as int,
-        shortname: (json['shortname'] as String?) ?? '',
-        fullname: (json['fullname'] as String?) ?? '',
-      );
+    id: json['id'] as int,
+    shortname: (json['shortname'] as String?) ?? '',
+    fullname: (json['fullname'] as String?) ?? '',
+  );
 }
 
 class MoodleStudent {
@@ -28,10 +28,10 @@ class MoodleStudent {
   final String email;
 
   factory MoodleStudent.fromJson(Map<String, dynamic> json) => MoodleStudent(
-        id: json['id'] as int,
-        fullname: (json['fullname'] as String?) ?? '',
-        email: (json['email'] as String?) ?? '',
-      );
+    id: json['id'] as int,
+    fullname: (json['fullname'] as String?) ?? '',
+    email: (json['email'] as String?) ?? '',
+  );
 }
 
 class MoodleGradeItem {
@@ -69,11 +69,11 @@ class MoodleGradeItem {
   /// [json['id']] is the assignment INSTANCE ID — required by mod_assign_save_grade.
   factory MoodleGradeItem.fromAssignment(Map<String, dynamic> json) {
     return MoodleGradeItem(
-      id: json['id'] as int,              // assignment instance ID
+      id: json['id'] as int, // assignment instance ID
       name: (json['name'] as String?) ?? 'Avaliação',
       itemType: 'assign',
       itemModule: 'assign',
-      itemInstance: json['cmid'] as int?,  // course module ID (for reference)
+      itemInstance: json['cmid'] as int?, // course module ID (for reference)
       itemNumber: 0,
       gradeMax: ((json['grade'] as num?) ?? 10).toDouble(),
     );

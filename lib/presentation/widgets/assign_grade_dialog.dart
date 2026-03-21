@@ -36,9 +36,11 @@ class _AssignGradeDialogState extends State<AssignGradeDialog> {
     final q = _searchCtrl.text.toLowerCase();
     setState(() {
       _filtered = ctrl.students
-          .where((s) =>
-              s.fullname.toLowerCase().contains(q) ||
-              s.email.toLowerCase().contains(q))
+          .where(
+            (s) =>
+                s.fullname.toLowerCase().contains(q) ||
+                s.email.toLowerCase().contains(q),
+          )
           .toList();
     });
   }
@@ -54,7 +56,7 @@ class _AssignGradeDialogState extends State<AssignGradeDialog> {
     final item = ctrl.selectedGradeItem!;
     final grade =
         (widget.result.correctAnswers / widget.result.totalQuestions) *
-            item.gradeMax;
+        item.gradeMax;
 
     return AnimatedBuilder(
       animation: ctrl,
@@ -80,7 +82,9 @@ class _AssignGradeDialogState extends State<AssignGradeDialog> {
                       '${widget.result.correctAnswers} / '
                       '${widget.result.totalQuestions} corretas',
                       style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold),
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     Text(
                       'Nota: ${grade.toStringAsFixed(1)} '
@@ -116,43 +120,45 @@ class _AssignGradeDialogState extends State<AssignGradeDialog> {
                 child: ctrl.isLoading
                     ? const Center(child: CircularProgressIndicator())
                     : ctrl.students.isEmpty
-                        ? Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Text('Nenhum aluno carregado.'),
-                              const SizedBox(height: 8),
-                              TextButton.icon(
-                                onPressed: ctrl.reloadStudents,
-                                icon: const Icon(Icons.refresh),
-                                label: const Text('Carregar alunos'),
-                              ),
-                            ],
-                          )
-                        : ListView.builder(
-                            itemCount: _filtered.length,
-                            itemBuilder: (_, i) {
-                              final s = _filtered[i];
-                              final isSelected = _selected == s;
-                              return ListTile(
-                                selected: isSelected,
-                                selectedTileColor: Colors.teal.shade50,
-                                leading: Icon(
-                                  isSelected
-                                      ? Icons.radio_button_checked
-                                      : Icons.radio_button_unchecked,
-                                  color: isSelected
-                                      ? Colors.teal
-                                      : Colors.grey,
-                                ),
-                                title: Text(s.fullname,
-                                    style: const TextStyle(fontSize: 14)),
-                                subtitle: Text(s.email,
-                                    style: const TextStyle(fontSize: 12)),
-                                dense: true,
-                                onTap: () => setState(() => _selected = s),
-                              );
-                            },
+                    ? Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text('Nenhum aluno carregado.'),
+                          const SizedBox(height: 8),
+                          TextButton.icon(
+                            onPressed: ctrl.reloadStudents,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Carregar alunos'),
                           ),
+                        ],
+                      )
+                    : ListView.builder(
+                        itemCount: _filtered.length,
+                        itemBuilder: (_, i) {
+                          final s = _filtered[i];
+                          final isSelected = _selected == s;
+                          return ListTile(
+                            selected: isSelected,
+                            selectedTileColor: Colors.teal.shade50,
+                            leading: Icon(
+                              isSelected
+                                  ? Icons.radio_button_checked
+                                  : Icons.radio_button_unchecked,
+                              color: isSelected ? Colors.teal : Colors.grey,
+                            ),
+                            title: Text(
+                              s.fullname,
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                            subtitle: Text(
+                              s.email,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            dense: true,
+                            onTap: () => setState(() => _selected = s),
+                          );
+                        },
+                      ),
               ),
 
               // ── Feedback message ────────────────────────────────────────
@@ -188,7 +194,9 @@ class _AssignGradeDialogState extends State<AssignGradeDialog> {
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white),
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
                   )
                 : const Icon(Icons.send),
             label: const Text('Enviar nota'),

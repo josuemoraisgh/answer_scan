@@ -1,41 +1,27 @@
-import 'dart:collection';
-
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/omr_capture_guide.dart';
-import '../../data/services/omr_sheet_scanner.dart';
 
 class CameraCapturePage extends StatefulWidget {
   const CameraCapturePage({
     super.key,
     required this.camera,
     required this.title,
-    this.scanner,
   });
 
   final CameraDescription camera;
   final String title;
-  final OMRSheetScanner? scanner;
 
   @override
   State<CameraCapturePage> createState() => _CameraCapturePageState();
 }
 
 class _CameraCapturePageState extends State<CameraCapturePage> {
-  static const _voteWindowSize = 5;
-  static const _minVotesPerAnswer = 3;
-
   late final CameraController _cameraController;
   late final Future<void> _initializeFuture;
 
   bool _takingPhoto = false;
-  bool _isProcessingLiveFrame = false;
-  int _frameCounter = 0;
-  OMRLiveGuideDebug? _liveGuide;
-  bool _isLandscape = false;
-  final Queue<Map<int, OMRLiveAnswerCell>> _liveAnswerHistory =
-      Queue<Map<int, OMRLiveAnswerCell>>();
 
   @override
   void initState() {
@@ -44,140 +30,14 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       widget.camera,
       ResolutionPreset.high,
       enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420,
     );
     _initializeFuture = _cameraController.initialize();
-    _initializeFuture.then((_) => _startLiveDetection());
   }
 
   @override
   void dispose() {
-    if (_cameraController.value.isStreamingImages) {
-      _cameraController.stopImageStream();
-    }
     _cameraController.dispose();
     super.dispose();
-  }
-
-  Future<void> _startLiveDetection() async {
-    if (widget.scanner == null || !_cameraController.value.isInitialized) {
-      return;
-    }
-
-    await _cameraController.startImageStream((image) async {
-      if (_takingPhoto || _isProcessingLiveFrame) {
-        return;
-      }
-
-      _frameCounter++;
-      if (_frameCounter % 8 != 0) {
-        return;
-      }
-
-      _isProcessingLiveFrame = true;
-
-      try {
-        final plane = image.planes.first;
-        final rawGuide = widget.scanner!.detectLiveGuide(
-          luminanceBytes: plane.bytes,
-          width: image.width,
-          height: image.height,
-          bytesPerRow: plane.bytesPerRow,
-          isLandscape: _isLandscape,
-        );
-        final liveGuide = _stabilizeWithFrameVoting(rawGuide);
-
-        if (mounted) {
-          setState(() {
-            _liveGuide = liveGuide;
-          });
-        }
-      } catch (_) {
-        _liveAnswerHistory.clear();
-        if (mounted) {
-          setState(() {
-            _liveGuide = null;
-          });
-        }
-      } finally {
-        _isProcessingLiveFrame = false;
-      }
-    });
-  }
-
-  OMRLiveGuideDebug _stabilizeWithFrameVoting(OMRLiveGuideDebug current) {
-    final currentByQuestion = <int, OMRLiveAnswerCell>{
-      for (final answer in current.detectedAnswers)
-        answer.questionIndex: answer,
-    };
-
-    _liveAnswerHistory.addLast(currentByQuestion);
-    while (_liveAnswerHistory.length > _voteWindowSize) {
-      _liveAnswerHistory.removeFirst();
-    }
-
-    final votes = <int, Map<int, int>>{};
-    final latestCellByChoice = <String, OMRLiveAnswerCell>{};
-
-    for (final frame in _liveAnswerHistory) {
-      frame.forEach((question, cell) {
-        final byOption = votes.putIfAbsent(question, () => <int, int>{});
-        byOption[cell.optionIndex] = (byOption[cell.optionIndex] ?? 0) + 1;
-        latestCellByChoice['$question:${cell.optionIndex}'] = cell;
-      });
-    }
-
-    final stabilized = <OMRLiveAnswerCell>[];
-
-    for (final entry in votes.entries) {
-      final q = entry.key;
-      final byOption = entry.value;
-      if (byOption.isEmpty) {
-        continue;
-      }
-
-      var bestOption = -1;
-      var bestVotes = 0;
-      var secondVotes = 0;
-
-      byOption.forEach((option, count) {
-        if (count > bestVotes) {
-          secondVotes = bestVotes;
-          bestVotes = count;
-          bestOption = option;
-        } else if (count > secondVotes) {
-          secondVotes = count;
-        }
-      });
-
-      final hasMajority = bestVotes >= _minVotesPerAnswer;
-      final hasSeparation = bestVotes > secondVotes;
-      if (!hasMajority || !hasSeparation || bestOption < 0) {
-        continue;
-      }
-
-      final currentCell = currentByQuestion[q];
-      if (currentCell != null && currentCell.optionIndex == bestOption) {
-        stabilized.add(currentCell);
-        continue;
-      }
-
-      final fallback = latestCellByChoice['$q:$bestOption'];
-      if (fallback != null) {
-        stabilized.add(fallback);
-      }
-    }
-
-    stabilized.sort((a, b) => a.questionIndex.compareTo(b.questionIndex));
-
-    return OMRLiveGuideDebug(
-      contentRect: current.contentRect,
-      topLeftMarker: current.topLeftMarker,
-      topRightMarker: current.topRightMarker,
-      bottomLeftMarker: current.bottomLeftMarker,
-      bottomRightMarker: current.bottomRightMarker,
-      detectedAnswers: stabilized,
-    );
   }
 
   Future<void> _capture() async {
@@ -191,9 +51,6 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 
     try {
       await _initializeFuture;
-      if (_cameraController.value.isStreamingImages) {
-        await _cameraController.stopImageStream();
-      }
       final file = await _cameraController.takePicture();
 
       if (!mounted) {
@@ -221,26 +78,28 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   Widget _buildFullBleedPreview() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final sensorAR = _cameraController.value.aspectRatio;
+        final sensorAspectRatio = _cameraController.value.aspectRatio;
         final isPortraitLayout = constraints.maxHeight > constraints.maxWidth;
-        // CameraPreview rotates automatically; effective AR flips in portrait
-        final displayAR = isPortraitLayout ? (1 / sensorAR) : sensorAR;
-        final parentAR = constraints.maxWidth / constraints.maxHeight;
+        final previewAspectRatio = isPortraitLayout
+            ? (1 / sensorAspectRatio)
+            : sensorAspectRatio;
+        final parentAspectRatio = constraints.maxWidth / constraints.maxHeight;
 
-        // Cover-fit: scale camera to fully fill available area, clip overflow
-        double w, h;
-        if (parentAR > displayAR) {
-          w = constraints.maxWidth;
-          h = constraints.maxWidth / displayAR;
+        double width;
+        double height;
+
+        if (parentAspectRatio > previewAspectRatio) {
+          width = constraints.maxWidth;
+          height = constraints.maxWidth / previewAspectRatio;
         } else {
-          h = constraints.maxHeight;
-          w = constraints.maxHeight * displayAR;
+          height = constraints.maxHeight;
+          width = constraints.maxHeight * previewAspectRatio;
         }
 
         return OverflowBox(
           alignment: Alignment.center,
-          maxWidth: w,
-          maxHeight: h,
+          maxWidth: width,
+          maxHeight: height,
           child: CameraPreview(_cameraController),
         );
       },
@@ -251,7 +110,6 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   Widget build(BuildContext context) {
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
-    _isLandscape = isLandscape;
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
@@ -262,17 +120,14 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final cameraWithOverlay = ClipRect(
+          final preview = ClipRect(
             child: Stack(
               fit: StackFit.expand,
-              children: [
-                _buildFullBleedPreview(),
-                _GuideOverlay(liveGuide: _liveGuide),
-              ],
+              children: [_buildFullBleedPreview(), const _GuideOverlay()],
             ),
           );
 
-          final captureBtn = FloatingActionButton.large(
+          final captureButton = FloatingActionButton.large(
             onPressed: _takingPhoto ? null : _capture,
             child: _takingPhoto
                 ? const CircularProgressIndicator()
@@ -282,13 +137,13 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
           if (isLandscape) {
             return Row(
               children: [
-                Expanded(child: cameraWithOverlay),
+                Expanded(child: preview),
                 SafeArea(
                   left: false,
                   child: Container(
                     color: Colors.black,
-                    width: 96,
-                    child: Center(child: captureBtn),
+                    width: 104,
+                    child: Center(child: captureButton),
                   ),
                 ),
               ],
@@ -297,13 +152,13 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 
           return Column(
             children: [
-              Expanded(child: cameraWithOverlay),
+              Expanded(child: preview),
               SafeArea(
                 top: false,
                 child: Container(
                   color: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  child: Center(child: captureBtn),
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  child: Center(child: captureButton),
                 ),
               ),
             ],
@@ -315,19 +170,15 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 }
 
 class _GuideOverlay extends StatelessWidget {
-  const _GuideOverlay({this.liveGuide});
-
-  final OMRLiveGuideDebug? liveGuide;
+  const _GuideOverlay();
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Guide rect is always landscape-shaped (sheet is wider than tall)
         double guideWidth = constraints.maxWidth * OMRCaptureGuide.widthFactor;
         double guideHeight = guideWidth * OMRCaptureGuide.heightFromWidthFactor;
 
-        // If height exceeds available space, scale down proportionally
         final maxHeight = constraints.maxHeight * 0.85;
         if (guideHeight > maxHeight) {
           guideHeight = maxHeight;
@@ -338,8 +189,30 @@ class _GuideOverlay extends StatelessWidget {
           child: SizedBox(
             width: guideWidth,
             height: guideHeight,
-            child: CustomPaint(
-              painter: _LiveGuidePainter(liveGuide: liveGuide),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                CustomPaint(painter: const _GuidePainter()),
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Container(
+                    margin: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text(
+                      'Alinhe os 4 marcadores pretos com os cantos do guia.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         );
@@ -348,79 +221,63 @@ class _GuideOverlay extends StatelessWidget {
   }
 }
 
-class _LiveGuidePainter extends CustomPainter {
-  const _LiveGuidePainter({required this.liveGuide});
-
-  final OMRLiveGuideDebug? liveGuide;
+class _GuidePainter extends CustomPainter {
+  const _GuidePainter();
 
   @override
   void paint(Canvas canvas, Size size) {
     final borderPaint = Paint()
-      ..color = liveGuide == null ? Colors.white : Colors.greenAccent
+      ..color = Colors.white
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.5;
+    final markerPaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.85)
+      ..style = PaintingStyle.fill;
+    final answerAreaPaint = Paint()
+      ..color = Colors.white70
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
 
     canvas.drawRect(Offset.zero & size, borderPaint);
 
-    final guide = liveGuide;
-    if (guide == null) {
-      return;
-    }
+    final markerSide = size.shortestSide * 0.085;
+    final markerInset = markerSide * 0.9;
 
-    final contentPaint = Paint()
-      ..color = Colors.lightBlueAccent
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawRect(_mapRect(guide.contentRect, size), contentPaint);
+    final markers = [
+      Rect.fromLTWH(markerInset, markerInset, markerSide, markerSide),
+      Rect.fromLTWH(
+        size.width - markerInset - markerSide,
+        markerInset,
+        markerSide,
+        markerSide,
+      ),
+      Rect.fromLTWH(
+        markerInset,
+        size.height - markerInset - markerSide,
+        markerSide,
+        markerSide,
+      ),
+      Rect.fromLTWH(
+        size.width - markerInset - markerSide,
+        size.height - markerInset - markerSide,
+        markerSide,
+        markerSide,
+      ),
+    ];
 
-    final markerPaint = Paint()
-      ..color = Colors.greenAccent
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5;
-    final pointPaint = Paint()
-      ..color = Colors.greenAccent
-      ..style = PaintingStyle.fill;
-
-    for (final marker in [
-      guide.topLeftMarker,
-      guide.topRightMarker,
-      guide.bottomLeftMarker,
-      guide.bottomRightMarker,
-    ]) {
-      final rect = _mapRect(marker, size);
+    for (final rect in markers) {
       canvas.drawRect(rect, markerPaint);
-      canvas.drawCircle(rect.center, 5, pointPaint);
     }
 
-    // Draw green filled rectangles at detected answer positions
-    if (guide.detectedAnswers.isNotEmpty) {
-      final answerFillPaint = Paint()
-        ..color = Colors.greenAccent.withValues(alpha: 0.35)
-        ..style = PaintingStyle.fill;
-      final answerStrokePaint = Paint()
-        ..color = Colors.greenAccent
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5;
-
-      for (final answer in guide.detectedAnswers) {
-        final rect = _mapRect(answer.rect, size);
-        canvas.drawRect(rect, answerFillPaint);
-        canvas.drawRect(rect, answerStrokePaint);
-      }
-    }
-  }
-
-  Rect _mapRect(OMRDebugRect rect, Size size) {
-    return Rect.fromLTRB(
-      rect.left * size.width,
-      rect.top * size.height,
-      rect.right * size.width,
-      rect.bottom * size.height,
+    final answerArea = Rect.fromLTWH(
+      size.width * 0.14,
+      size.height * 0.24,
+      size.width * 0.78,
+      size.height * 0.56,
     );
+    canvas.drawRect(answerArea, answerAreaPaint);
   }
 
   @override
-  bool shouldRepaint(covariant _LiveGuidePainter oldDelegate) {
-    return oldDelegate.liveGuide != liveGuide;
-  }
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

@@ -10,8 +10,8 @@ class MoodleController extends ChangeNotifier {
   MoodleController({
     required MoodleService service,
     required MoodleSessionStore store,
-  })  : _service = service,
-        _store = store;
+  }) : _service = service,
+       _store = store;
 
   final MoodleService _service;
   final MoodleSessionStore _store;

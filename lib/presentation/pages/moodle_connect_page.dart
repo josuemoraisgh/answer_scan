@@ -79,8 +79,7 @@ class _MoodleConnectPageState extends State<MoodleConnectPage> {
         obscure: _obscure,
         showAdvanced: _showAdvanced,
         onToggle: () => setState(() => _obscure = !_obscure),
-        onToggleAdvanced: () =>
-            setState(() => _showAdvanced = !_showAdvanced),
+        onToggleAdvanced: () => setState(() => _showAdvanced = !_showAdvanced),
         onConnect: _connect,
         isLoading: ctrl.isLoading,
         error: ctrl.errorMessage,
@@ -118,13 +117,13 @@ class _MoodleConnectPageState extends State<MoodleConnectPage> {
   }
 
   void _connect() => ctrl.connect(
-        baseUrl: _urlCtrl.text.trim(),
-        username: _userCtrl.text.trim(),
-        password: _passCtrl.text,
-        serviceName: _serviceCtrl.text.trim().isEmpty
-            ? 'moodle_mobile_app'
-            : _serviceCtrl.text.trim(),
-      );
+    baseUrl: _urlCtrl.text.trim(),
+    username: _userCtrl.text.trim(),
+    password: _passCtrl.text,
+    serviceName: _serviceCtrl.text.trim().isEmpty
+        ? 'moodle_mobile_app'
+        : _serviceCtrl.text.trim(),
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -203,9 +202,7 @@ class _LoginForm extends StatelessWidget {
         // ── Advanced settings ──────────────────────────────────────────
         TextButton.icon(
           onPressed: onToggleAdvanced,
-          icon: Icon(showAdvanced
-              ? Icons.expand_less
-              : Icons.expand_more),
+          icon: Icon(showAdvanced ? Icons.expand_less : Icons.expand_more),
           label: const Text('Configurações avançadas'),
           style: TextButton.styleFrom(
             alignment: Alignment.centerLeft,
@@ -251,7 +248,9 @@ class _LoginForm extends StatelessWidget {
                   width: 18,
                   height: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white),
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
               : const Icon(Icons.login),
           label: const Text('Conectar'),
@@ -285,14 +284,18 @@ class _CourseList extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Conectado como: $connectedAs',
-            style: Theme.of(context).textTheme.bodySmall),
+        Text(
+          'Conectado como: $connectedAs',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
         const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
-              child: Text('Selecione o curso:',
-                  style: Theme.of(context).textTheme.titleMedium),
+              child: Text(
+                'Selecione o curso:',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
             ),
             IconButton(
               onPressed: onReload,
@@ -351,8 +354,7 @@ class _GradeItemList extends StatelessWidget {
       children: [
         Row(
           children: [
-            IconButton(
-                onPressed: onBack, icon: const Icon(Icons.arrow_back)),
+            IconButton(onPressed: onBack, icon: const Icon(Icons.arrow_back)),
             Expanded(
               child: Text(
                 course.fullname,
@@ -362,8 +364,10 @@ class _GradeItemList extends StatelessWidget {
             ),
           ],
         ),
-        Text('Selecione o item de nota:',
-            style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          'Selecione o item de nota:',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
         const SizedBox(height: 8),
         if (isLoading) const Center(child: CircularProgressIndicator()),
         if (error != null)
@@ -375,8 +379,9 @@ class _GradeItemList extends StatelessWidget {
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
             child: Text(
-                'Nenhum item de nota disponível neste curso.\n'
-                'Verifique se você tem permissão de professor.'),
+              'Nenhum item de nota disponível neste curso.\n'
+              'Verifique se você tem permissão de professor.',
+            ),
           ),
         for (final item in items)
           Card(
@@ -425,8 +430,10 @@ class _ConfiguredSummary extends StatelessWidget {
         _InfoRow('Servidor', session.baseUrl),
         _InfoRow('Usuário', session.fullname),
         _InfoRow('Curso', course.fullname),
-        _InfoRow('Item de nota',
-            '${item.name}  (máx ${item.gradeMax.toStringAsFixed(0)})'),
+        _InfoRow(
+          'Item de nota',
+          '${item.name}  (máx ${item.gradeMax.toStringAsFixed(0)})',
+        ),
         _InfoRow('Alunos carregados', '${ctrl.students.length}'),
         const SizedBox(height: 20),
         OutlinedButton.icon(
@@ -457,8 +464,10 @@ class _InfoRow extends StatelessWidget {
         children: [
           SizedBox(
             width: 120,
-            child: Text('$label:',
-                style: const TextStyle(fontWeight: FontWeight.w600)),
+            child: Text(
+              '$label:',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
           ),
           Expanded(child: Text(value)),
         ],

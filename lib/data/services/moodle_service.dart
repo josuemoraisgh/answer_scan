@@ -56,7 +56,12 @@ class MoodleService {
         .where((n) => n.isNotEmpty)
         .toSet();
 
-    return (token, info['userid'] as int, (info['fullname'] as String?) ?? '', fns);
+    return (
+      token,
+      info['userid'] as int,
+      (info['fullname'] as String?) ?? '',
+      fns,
+    );
   }
 
   Future<List<MoodleCourse>> getCourses({
@@ -85,17 +90,15 @@ class MoodleService {
     required String token,
     required int courseId,
   }) async {
-    final data = await _ws(
-      baseUrl,
-      token,
-      'mod_assign_get_assignments',
-      {'courseids[0]': '$courseId'},
-    ) as Map<String, dynamic>;
+    final data =
+        await _ws(baseUrl, token, 'mod_assign_get_assignments', {
+              'courseids[0]': '$courseId',
+            })
+            as Map<String, dynamic>;
 
     final courses = (data['courses'] as List?) ?? [];
     if (courses.isEmpty) return [];
-    final assignments =
-        ((courses[0] as Map)['assignments'] as List?) ?? [];
+    final assignments = ((courses[0] as Map)['assignments'] as List?) ?? [];
 
     return assignments
         .map((a) => a as Map<String, dynamic>)
@@ -121,12 +124,12 @@ class MoodleService {
     // Otherwise pass only when BOTH submission plugins are disabled
     final configs = (a['configs'] as List?) ?? [];
     bool subEnabled(String plugin) => configs.any(
-          (c) =>
-              (c as Map)['subtype'] == 'assignsubmission' &&
-              c['plugin'] == plugin &&
-              c['name'] == 'enabled' &&
-              c['value'] == '1',
-        );
+      (c) =>
+          (c as Map)['subtype'] == 'assignsubmission' &&
+          c['plugin'] == plugin &&
+          c['name'] == 'enabled' &&
+          c['value'] == '1',
+    );
     return !subEnabled('file') && !subEnabled('onlinetext');
   }
 

@@ -1,12 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:answer_scan/domain/entities/answer_sheet.dart';
-import 'package:answer_scan/domain/repositories/sheet_reader_repository.dart';
-import 'package:answer_scan/domain/usecases/grade_exam_usecase.dart';
-import 'package:answer_scan/data/services/calibration_profile_store.dart';
 import 'package:answer_scan/data/services/moodle_service.dart';
 import 'package:answer_scan/data/services/moodle_session_store.dart';
-import 'package:answer_scan/data/services/omr_sheet_scanner.dart';
+import 'package:answer_scan/domain/entities/omr_scan_result.dart';
+import 'package:answer_scan/domain/repositories/sheet_reader_repository.dart';
+import 'package:answer_scan/domain/usecases/grade_exam_usecase.dart';
 import 'package:answer_scan/main.dart';
 import 'package:answer_scan/presentation/controllers/correction_controller.dart';
 import 'package:answer_scan/presentation/controllers/moodle_controller.dart';
@@ -27,8 +25,6 @@ void main() {
         controller: controller,
         moodleController: moodleController,
         camera: null,
-        scanner: OMRSheetScanner(),
-        calibrationStore: CalibrationProfileStore(),
       ),
     );
 
@@ -38,7 +34,19 @@ void main() {
 
 class _FakeSheetReaderRepository implements SheetReaderRepository {
   @override
-  Future<AnswerSheet> readSheet(String imagePath) {
-    throw UnimplementedError();
+  Future<OmrScanResult> scanSheet(
+    String imagePath, {
+    bool debug = false,
+  }) async {
+    return const OmrScanResult(
+      success: false,
+      sheetStatus: 'idle',
+      rawAnswers: {},
+      confidence: {},
+      scores: {},
+      markersDetected: 0,
+      perspectiveCorrected: false,
+      error: 'unused',
+    );
   }
 }

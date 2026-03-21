@@ -32,8 +32,7 @@ class MoodleSessionStore {
       userId: userId,
       fullname: p.getString(_kFullname) ?? '',
       serviceName: p.getString(_kServiceName) ?? 'moodle_mobile_app',
-      availableFunctions:
-          (p.getStringList(_kAvailableFunctions) ?? []).toSet(),
+      availableFunctions: (p.getStringList(_kAvailableFunctions) ?? []).toSet(),
     );
   }
 
@@ -44,8 +43,7 @@ class MoodleSessionStore {
     await p.setInt(_kUserId, s.userId);
     await p.setString(_kFullname, s.fullname);
     await p.setString(_kServiceName, s.serviceName);
-    await p.setStringList(
-        _kAvailableFunctions, s.availableFunctions.toList());
+    await p.setStringList(_kAvailableFunctions, s.availableFunctions.toList());
   }
 
   Future<MoodleCourse?> loadCourse() async {
@@ -99,11 +97,22 @@ class MoodleSessionStore {
   Future<void> clear() async {
     final p = await SharedPreferences.getInstance();
     for (final key in [
-      _kBaseUrl, _kToken, _kUserId, _kFullname, _kServiceName,
+      _kBaseUrl,
+      _kToken,
+      _kUserId,
+      _kFullname,
+      _kServiceName,
       _kAvailableFunctions,
-      _kCourseId, _kCourseShortname, _kCourseFullname,
-      _kItemId, _kItemName, _kItemType, _kItemModule,
-      _kItemInstance, _kItemNumber, _kItemGradeMax,
+      _kCourseId,
+      _kCourseShortname,
+      _kCourseFullname,
+      _kItemId,
+      _kItemName,
+      _kItemType,
+      _kItemModule,
+      _kItemInstance,
+      _kItemNumber,
+      _kItemGradeMax,
     ]) {
       await p.remove(key);
     }
