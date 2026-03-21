@@ -619,44 +619,58 @@ class OMRSheetScanner {
     final regionH = (regionY2 - regionY1).toDouble();
     final maxDist = sqrt(regionW * regionW + regionH * regionH);
 
-    _BlockCandidate? best;
-    var bestScore = double.negativeInfinity;
-
-    for (final c in regional) {
+    double candidateScore(_BlockCandidate c) {
       final cx = c.x + c.size / 2;
       final cy = c.y + c.size / 2;
       final dx = cx - cornerX;
       final dy = cy - cornerY;
       final dist = sqrt(dx * dx + dy * dy);
-
-      // Proximity: 1.0 when at the corner, 0.0 when at max distance
+      // Proximity: 1.0 at corner, 0.0 at max distance; density secondary
       final proximity = 1.0 - (dist / maxDist).clamp(0.0, 1.0);
+      return proximity * 0.70 + c.density * 0.30;
+    }
 
-      // Score heavily favors proximity to the corner (70%)
-      // with density as a secondary filter (30%)
-      final score = proximity * 0.70 + c.density * 0.30;
+    // Sort by proximity+density score descending and try the top candidates.
+    // Among those, prefer the one whose refined bounding box is most square —
+    // genuine corner markers are (near-)square, answer-bubble clusters are not.
+    final ranked = regional.toList()
+      ..sort((a, b) => candidateScore(b).compareTo(candidateScore(a)));
 
-      if (score > bestScore) {
-        bestScore = score;
-        best = c;
+    _MarkerBox? bestBox;
+    var bestSquareness = -1.0;
+
+    for (final c in ranked.take(5)) {
+      try {
+        final box = _refineMarkerBounds(
+          gray,
+          c.x,
+          c.y,
+          c.x + c.size - 1,
+          c.y + c.size - 1,
+          threshold,
+        );
+        final bw = (box.right - box.left).toDouble();
+        final bh = (box.bottom - box.top).toDouble();
+        if (bw <= 0 || bh <= 0) continue;
+        // Squareness ∈ (0, 1]: 1.0 for perfect square, lower for rectangles.
+        final squareness = bw < bh ? bw / bh : bh / bw;
+        if (squareness > bestSquareness) {
+          bestSquareness = squareness;
+          bestBox = box;
+        }
+      } catch (_) {
+        continue;
       }
     }
 
-    if (best == null) {
+    if (bestBox == null) {
       throw const FormatException(
         'Nao foi possivel localizar os 4 marcadores. '
         'Tente aproximar e alinhar melhor a folha.',
       );
     }
 
-    return _refineMarkerBounds(
-      gray,
-      best.x,
-      best.y,
-      best.x + best.size - 1,
-      best.y + best.size - 1,
-      threshold,
-    );
+    return bestBox;
   }
 
   /// Compute Otsu threshold on the full image for binarization.
@@ -914,32 +928,37 @@ class OMRSheetScanner {
   }
 
   _GridFrame _buildGridFrame(_CornerMarkers markers) {
-    // Use marker centers as the most robust and stable reference points.
-    // The answer grid (20 cols × 5 rows) spans exactly between the
-    // 4 marker center positions.
-    final tl = markers.topLeft.center;
-    final tr = markers.topRight.center;
-    final bl = markers.bottomLeft.center;
-    final br = markers.bottomRight.center;
+    // Use the INNERMOST edge of each corner marker:
+    //   top    markers → bottom edge  (innermost going down)
+    //   bottom markers → top edge     (innermost going up)
+    //   left   markers → right edge   (innermost going right)
+    //   right  markers → left edge    (innermost going left)
+    //
+    // Average the two markers that share each boundary to get a robust,
+    // noise-tolerant value for each side of the rectangle. The result is
+    // a true axis-aligned rectangle so that every one of the 20×5 cells
+    // has exactly equal dimensions — matching the printed template geometry.
+    final left   = (markers.topLeft.right   + markers.bottomLeft.right)  / 2.0;
+    final right  = (markers.topRight.left   + markers.bottomRight.left)  / 2.0;
+    final top    = (markers.topLeft.bottom  + markers.topRight.bottom)   / 2.0;
+    final bottom = (markers.bottomLeft.top  + markers.bottomRight.top)   / 2.0;
 
-    // Validate that the 4 markers form a proper convex quadrilateral.
-    // Crossed or inverted markers would produce a degenerate grid.
-    if (tl.dx >= tr.dx || bl.dx >= br.dx) {
+    if (left >= right) {
       throw const FormatException(
         'Marcadores horizontais invertidos. Centralize a folha no guia.',
       );
     }
-    if (tl.dy >= bl.dy || tr.dy >= br.dy) {
+    if (top >= bottom) {
       throw const FormatException(
         'Marcadores verticais invertidos. Centralize a folha no guia.',
       );
     }
 
     return _GridFrame(
-      topLeft: tl,
-      topRight: tr,
-      bottomLeft: bl,
-      bottomRight: br,
+      topLeft:     Offset(left,  top),
+      topRight:    Offset(right, top),
+      bottomLeft:  Offset(left,  bottom),
+      bottomRight: Offset(right, bottom),
     );
   }
 
@@ -1077,13 +1096,17 @@ class OMRSheetScanner {
     List<double> scores,
     OMRScannerCalibration calibration,
   ) {
-    // Median of the 5 options for this question (index 2 after sort).
+    // Background baseline: mean of the N-1 lowest scores.
+    // Excluding the highest (likely the marked option) prevents a strong mark
+    // from inflating the baseline and reducing apparent contrast.
     final sorted = [...scores]..sort();
-    final median = sorted[2];
+    final background =
+        sorted.take(sorted.length - 1).fold(0.0, (a, b) => a + b) /
+            (sorted.length - 1);
 
-    // Relative scores: how much darker each option is vs. the median.
+    // Relative scores: how much darker each option is vs. the background.
     final relative =
-        scores.map((s) => (s - median).clamp(-1.0, 1.0)).toList();
+        scores.map((s) => (s - background).clamp(-1.0, 1.0)).toList();
 
     final indexed = relative.asMap().entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
@@ -1134,7 +1157,7 @@ class OMRSheetScanner {
   /// consumed directly by [_integralRectSum].
   List<int> _buildAdaptiveDarkIntegral(
     _GrayImage gray, {
-    double bias = 0.15,
+    double bias = 0.10,
     int windowFraction = 8,
   }) {
     final w = gray.width;

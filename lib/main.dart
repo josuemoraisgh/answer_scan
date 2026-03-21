@@ -29,7 +29,7 @@ Future<void> main() async {
   final calibrationStore = CalibrationProfileStore();
   final calibration = await calibrationStore.load();
   final scanner = OMRSheetScanner(defaultCalibration: calibration);
-  final repository = SheetReaderRepositoryImpl(scanner);
+  final repository = SheetReaderRepositoryImpl();
   final useCase = GradeExamUseCase();
   final controller = CorrectionController(
     repository: repository,

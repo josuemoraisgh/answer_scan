@@ -31,7 +31,19 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+**/build/
 /coverage/
+.gradle/
+
+# Local diagnostics and temp files
+*.hprof
+.tmp_appdata/
+.tmp_home/
+.tmp_flutter_test.*
+android/local.properties
+*.apk
+*.aab
+*.ipa
 
 # Symbolication related
 app.*.symbols

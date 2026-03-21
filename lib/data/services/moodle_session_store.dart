@@ -8,6 +8,7 @@ class MoodleSessionStore {
   static const _kUserId = 'moodle_user_id';
   static const _kFullname = 'moodle_fullname';
   static const _kServiceName = 'moodle_service_name';
+  static const _kAvailableFunctions = 'moodle_available_functions';
   static const _kCourseId = 'moodle_course_id';
   static const _kCourseShortname = 'moodle_course_shortname';
   static const _kCourseFullname = 'moodle_course_fullname';
@@ -31,6 +32,8 @@ class MoodleSessionStore {
       userId: userId,
       fullname: p.getString(_kFullname) ?? '',
       serviceName: p.getString(_kServiceName) ?? 'moodle_mobile_app',
+      availableFunctions:
+          (p.getStringList(_kAvailableFunctions) ?? []).toSet(),
     );
   }
 
@@ -41,6 +44,8 @@ class MoodleSessionStore {
     await p.setInt(_kUserId, s.userId);
     await p.setString(_kFullname, s.fullname);
     await p.setString(_kServiceName, s.serviceName);
+    await p.setStringList(
+        _kAvailableFunctions, s.availableFunctions.toList());
   }
 
   Future<MoodleCourse?> loadCourse() async {
@@ -95,6 +100,7 @@ class MoodleSessionStore {
     final p = await SharedPreferences.getInstance();
     for (final key in [
       _kBaseUrl, _kToken, _kUserId, _kFullname, _kServiceName,
+      _kAvailableFunctions,
       _kCourseId, _kCourseShortname, _kCourseFullname,
       _kItemId, _kItemName, _kItemType, _kItemModule,
       _kItemInstance, _kItemNumber, _kItemGradeMax,

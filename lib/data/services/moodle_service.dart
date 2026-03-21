@@ -20,10 +20,9 @@ class MoodleService {
   // Public API
   // ──────────────────────────────────────────────────────────────────────────
 
-  /// Authenticates and returns (token, userId, fullname).
-  /// [serviceName] must match an External Service configured in Moodle that
-  /// includes all WS functions used by this app.
-  Future<(String token, int userId, String fullname)> login({
+  /// Authenticates and returns (token, userId, fullname, availableFunctions).
+  /// [serviceName] must match an External Service configured in Moodle.
+  Future<(String token, int userId, String fullname, Set<String> fns)> login({
     required String baseUrl,
     required String username,
     required String password,
@@ -50,7 +49,14 @@ class MoodleService {
     final info =
         await _ws(baseUrl, token, 'core_webservice_get_site_info')
             as Map<String, dynamic>;
-    return (token, info['userid'] as int, (info['fullname'] as String?) ?? '');
+
+    // Extract the list of WS functions enabled in this external service.
+    final fns = ((info['functions'] as List?) ?? [])
+        .map((f) => (f as Map)['name'] as String? ?? '')
+        .where((n) => n.isNotEmpty)
+        .toSet();
+
+    return (token, info['userid'] as int, (info['fullname'] as String?) ?? '', fns);
   }
 
   Future<List<MoodleCourse>> getCourses({
@@ -68,27 +74,60 @@ class MoodleService {
         .toList();
   }
 
-  /// Returns only grade items that are suitable for the grade picker.
-  Future<List<MoodleGradeItem>> getGradeItems({
+  /// Returns assignments configured as grade columns (no student submission).
+  ///
+  /// Uses [mod_assign_get_assignments] and filters by ALL criteria:
+  ///   • nosubmissions = 1  OR  assignsubmission_file/onlinetext disabled
+  ///   • grade > 0  (numeric, not a scale)
+  ///   • markingworkflow = 0  AND  markingallocation = 0
+  Future<List<MoodleGradeItem>> getAssignGradeColumns({
     required String baseUrl,
     required String token,
     required int courseId,
-    required int userId,
   }) async {
-    final data =
-        await _ws(baseUrl, token, 'gradereport_user_get_grade_items', {
-              'courseid': '$courseId',
-              'userid': '$userId',
-            })
-            as Map<String, dynamic>;
+    final data = await _ws(
+      baseUrl,
+      token,
+      'mod_assign_get_assignments',
+      {'courseids[0]': '$courseId'},
+    ) as Map<String, dynamic>;
 
-    final usergrades = (data['usergrades'] as List?) ?? [];
-    if (usergrades.isEmpty) return [];
-    final items = ((usergrades[0] as Map)['gradeitems'] as List?) ?? [];
-    return items
-        .map((e) => MoodleGradeItem.fromJson(e as Map<String, dynamic>))
-        .where((item) => item.isSubmittable)
+    final courses = (data['courses'] as List?) ?? [];
+    if (courses.isEmpty) return [];
+    final assignments =
+        ((courses[0] as Map)['assignments'] as List?) ?? [];
+
+    return assignments
+        .map((a) => a as Map<String, dynamic>)
+        .where(_isGradeColumn)
+        .map(MoodleGradeItem.fromAssignment)
         .toList();
+  }
+
+  /// Returns true when the assignment is a pure grade column:
+  /// no student interaction, only the teacher writes a grade via the API.
+  bool _isGradeColumn(Map<String, dynamic> a) {
+    // Numeric grade required (negative value = scale, not supported)
+    final grade = (a['grade'] as num?)?.toDouble() ?? 0;
+    if (grade <= 0) return false;
+
+    // No complex marking workflow
+    if ((a['markingworkflow'] as int?) == 1) return false;
+    if ((a['markingallocation'] as int?) == 1) return false;
+
+    // Explicitly configured as "no submissions" → grade column
+    if ((a['nosubmissions'] as int?) == 1) return true;
+
+    // Otherwise pass only when BOTH submission plugins are disabled
+    final configs = (a['configs'] as List?) ?? [];
+    bool subEnabled(String plugin) => configs.any(
+          (c) =>
+              (c as Map)['subtype'] == 'assignsubmission' &&
+              c['plugin'] == plugin &&
+              c['name'] == 'enabled' &&
+              c['value'] == '1',
+        );
+    return !subEnabled('file') && !subEnabled('onlinetext');
   }
 
   Future<List<MoodleStudent>> getStudents({
@@ -106,179 +145,33 @@ class MoodleService {
         .toList();
   }
 
-  /// Submits a grade for [item] to student [studentId].
+  /// Submits a grade for an assignment-as-grade-column via [mod_assign_save_grade].
   ///
-  /// Strategy by item type:
-  /// 1. mod_assign  → [mod_assign_save_grade]  (included in moodle_mobile_app)
-  /// 2. other mod   → [core_grades_update_grades] with component='mod_X'
-  /// 3. manual      → tries [gradeimport_direct_import_grades] first,
-  ///                   then falls back to [core_grades_update_grades] with
-  ///                   component='manual'; both require a custom WS service.
+  /// Only call this for items returned by [getAssignGradeColumns] (itemType='assign').
+  /// [item.id] must be the assignment INSTANCE ID.
   Future<void> submitGrade({
     required String baseUrl,
     required String token,
-    required int courseId,
     required MoodleGradeItem item,
     required int studentId,
     required double grade,
   }) async {
-    if (item.itemType == 'mod' && item.itemModule == 'assign') {
-      // Try assign-specific API first; fall back to gradebook update if it fails
-      // (e.g. student has no submission record yet).
-      try {
-        await _submitViaAssign(baseUrl, token, item, studentId, grade);
-      } on MoodleException catch (e) {
-        if (_isServiceError(e.errorCode ?? '')) rethrow;
-        // Fallback 1: update directly in the gradebook (equivalent to UI edit mode)
-        try {
-          await _submitViaGradeUpdate(
-            baseUrl,
-            token,
-            courseId,
-            item,
-            studentId,
-            grade,
-          );
-        } on MoodleException catch (e2) {
-          if (_isServiceError(e2.errorCode ?? '')) rethrow;
-          // Fallback 2: grade item import — works when student has no submission
-          // and core_grades_update_grades also returns invalidrecordunknown.
-          await _submitManualItem(
-            baseUrl,
-            token,
-            courseId,
-            item,
-            studentId,
-            grade,
-          );
-        }
-      }
-    } else if (item.itemType == 'mod') {
-      await _submitViaGradeUpdate(
-        baseUrl,
-        token,
-        courseId,
-        item,
-        studentId,
-        grade,
-      );
-    } else {
-      // Manual item: try direct import first, then grade_update fallback.
-      await _submitManualItem(baseUrl, token, courseId, item, studentId, grade);
-    }
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // Strategy implementations
-  // ──────────────────────────────────────────────────────────────────────────
-
-  Future<void> _submitViaAssign(
-    String baseUrl,
-    String token,
-    MoodleGradeItem item,
-    int studentId,
-    double grade,
-  ) async {
-    // Try with attemptnumber=0 first (works even when student has no submission).
-    // Fall back to attemptnumber=-1 for compatibility with older Moodle versions.
-    for (final attempt in ['0', '-1']) {
-      try {
-        await _ws(baseUrl, token, 'mod_assign_save_grade', {
-          'assignmentid': '${item.itemInstance}',
-          'userid': '$studentId',
-          'grade': grade.toStringAsFixed(2),
-          'attemptnumber': attempt,
-          'addattempt': '1',
-          'workflowstate': 'graded',
-          'applytoall': '0',
-          'plugindata[assignfeedbackcomments_editor][text]': '',
-          'plugindata[assignfeedbackcomments_editor][format]': '1',
-        });
-        return; // success
-      } on MoodleException catch (e) {
-        final code = e.errorCode ?? '';
-        // Only retry on "record not found" type errors; propagate auth/permission errors immediately.
-        if (_isServiceError(code)) rethrow;
-        if (attempt == '-1') rethrow; // last attempt, propagate
-        // else continue to next attempt value
-      }
-    }
-  }
-
-  Future<void> _submitViaGradeUpdate(
-    String baseUrl,
-    String token,
-    int courseId,
-    MoodleGradeItem item,
-    int studentId,
-    double grade,
-  ) async {
-    await _ws(baseUrl, token, 'core_grades_update_grades', {
-      'source': 'answerScan',
-      'courseid': '$courseId',
-      'component': 'mod_${item.itemModule}',
-      'activityid': '${item.itemInstance ?? 0}',
-      'itemnumber': '${item.itemNumber}',
-      'grades[0][studentid]': '$studentId',
-      'grades[0][grade]': grade.toStringAsFixed(2),
+    await _ws(baseUrl, token, 'mod_assign_save_grade', {
+      'assignmentid': '${item.id}',
+      'userid': '$studentId',
+      'grade': grade.toStringAsFixed(2),
+      'attemptnumber': '-1',
+      'addattempt': '0',
+      'workflowstate': 'released',
+      'applytoall': '0',
+      'plugindata[assignfeedbackcomments_editor][text]': '',
+      'plugindata[assignfeedbackcomments_editor][format]': '1',
     });
   }
 
-  /// Manual grade items cannot be updated via [grade_update()] because they
-  /// have no component in Moodle. Strategy:
-  ///   1. Try [gradeimport_direct_import_grades] — uses the item's numeric ID
-  ///      directly and works for any item type. Requires the plugin to be
-  ///      enabled and the WS function in the service.
-  ///   2. Fallback: [core_grades_update_grades] with component='manual' —
-  ///      may work on some Moodle configurations.
-  ///
-  /// Both strategies require a custom WS service. If both fail the error
-  /// message contains actionable guidance.
-  Future<void> _submitManualItem(
-    String baseUrl,
-    String token,
-    int courseId,
-    MoodleGradeItem item,
-    int studentId,
-    double grade,
-  ) async {
-    // Strategy 1: gradeimport_direct_import_grades
-    try {
-      await _ws(baseUrl, token, 'gradeimport_direct_import_grades', {
-        'courseid': '$courseId',
-        'data[0][gradeitem]': '${item.id}',
-        'data[0][importcode]':
-            'answerScan_${DateTime.now().millisecondsSinceEpoch}',
-        'data[0][grades][0][userid]': '$studentId',
-        'data[0][grades][0][grade]': grade.toStringAsFixed(2),
-        'data[0][grades][0][feedback]': '',
-      });
-      return; // success
-    } on MoodleException catch (e) {
-      // If it's a "not in service" or "function not found" error, try fallback.
-      final code = e.errorCode ?? '';
-      if (!_isServiceError(code)) rethrow; // unexpected error — propagate
-    }
-
-    // Strategy 2: core_grades_update_grades with component='manual'
-    await _ws(baseUrl, token, 'core_grades_update_grades', {
-      'source': 'answerScan',
-      'courseid': '$courseId',
-      'component': 'manual',
-      'activityid': '0',
-      'itemnumber': '${item.itemNumber}',
-      'grades[0][studentid]': '$studentId',
-      'grades[0][grade]': grade.toStringAsFixed(2),
-    });
-  }
-
-  /// Returns true when the error code indicates the WS function is not
-  /// available in the current service (not a business-logic error).
-  bool _isServiceError(String code) =>
-      code == 'accessdenied' ||
-      code == 'webserviceaccessexception' ||
-      code == 'servicenotavailable' ||
-      code == 'invalidfunction';
+  // ──────────────────────────────────────────────────────────────────────────
+  // Helpers
+  // ──────────────────────────────────────────────────────────────────────────
 
   // ──────────────────────────────────────────────────────────────────────────
   // Helpers
@@ -338,22 +231,24 @@ class MoodleService {
       case 'accessdenied':
       case 'webserviceaccessexception':
         return 'Função não autorizada no serviço Moodle.\n'
-            'Crie um Serviço Externo personalizado em:\n'
+            'Adicione a função gradeimport_direct_import_grades ao seu '
+            'Serviço Externo em:\n'
             'Admin → Servidor → Web services → Serviços externos\n'
-            'e adicione: core_grades_update_grades, '
-            'mod_assign_save_grade, gradeimport_direct_import_grades.\n'
             'Use o token deste serviço ao conectar.';
       case 'nopermissions':
         return 'Sem permissão para editar notas neste curso.\n'
             'Verifique se você tem o papel de Professor com edição.';
       case 'invalidrecordunknown':
-        return 'Não foi possível registrar a nota: o aluno ou item de avaliação '
-            'não foi encontrado no Moodle.\n'
-            'Verifique se o aluno está matriculado no curso e se a atividade '
-            'existe no Moodle.';
+        return 'Aluno ou item de avaliação não encontrado no Moodle.\n'
+            'Verifique se o e-mail do aluno está cadastrado e se o nome do '
+            'item de nota é idêntico ao exibido no Moodle.';
       case 'servicenotavailable':
-        return 'Serviço "$original" não encontrado no Moodle.\n'
-            'Verifique o nome do serviço nas configurações avançadas.';
+        return 'Serviço Moodle não encontrado.\n'
+            'Verifique o endereço do servidor nas configurações.';
+      case 'invalidfunction':
+        return 'A função gradeimport_direct_import_grades não existe neste '
+            'Moodle ou não foi adicionada ao Serviço Externo.\n'
+            'Verifique com o administrador do Moodle.';
       default:
         return errorCode != null ? '$original [$errorCode]' : original;
     }

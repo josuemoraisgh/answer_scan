@@ -58,34 +58,37 @@ class MoodleGradeItem {
   /// Locked items require the 'moodle/grade:override' capability or unlocking.
   final bool locked;
 
-  bool get isManual => itemType == 'manual';
+  /// Returns true for items that can receive a grade via mod_assign_save_grade.
+  bool get isSubmittable => itemType == 'assign';
 
-  /// Returns true for items that can be shown in the grade-item picker.
-  bool get isSubmittable =>
-      (itemType == 'mod' && itemModule != null && itemInstance != null) ||
-      itemType == 'manual';
+  String get displayType => itemModule ?? itemType;
 
-  String get displayType {
-    if (itemType == 'mod') return itemModule ?? 'modulo';
-    if (itemType == 'manual') return 'manual';
-    return itemType;
+  /// Builds a [MoodleGradeItem] from a [mod_assign_get_assignments] assignment
+  /// that passed the grade-column filter.
+  ///
+  /// [json['id']] is the assignment INSTANCE ID — required by mod_assign_save_grade.
+  factory MoodleGradeItem.fromAssignment(Map<String, dynamic> json) {
+    return MoodleGradeItem(
+      id: json['id'] as int,              // assignment instance ID
+      name: (json['name'] as String?) ?? 'Avaliação',
+      itemType: 'assign',
+      itemModule: 'assign',
+      itemInstance: json['cmid'] as int?,  // course module ID (for reference)
+      itemNumber: 0,
+      gradeMax: ((json['grade'] as num?) ?? 10).toDouble(),
+    );
   }
 
+  // Keep fromJson for session store backwards-compatibility.
   factory MoodleGradeItem.fromJson(Map<String, dynamic> json) {
-    // 'locked' at item level (not per-student) may be a timestamp (int) or bool.
-    final rawLocked = json['locked'];
-    final isLocked =
-        rawLocked == true || (rawLocked is num && rawLocked > 0);
-
     return MoodleGradeItem(
       id: json['id'] as int,
-      name: (json['itemname'] as String?) ?? 'Item',
-      itemType: (json['itemtype'] as String?) ?? '',
-      itemModule: json['itemmodule'] as String?,
-      itemInstance: json['iteminstance'] as int?,
-      itemNumber: (json['itemnumber'] as int?) ?? 0,
-      gradeMax: ((json['grademax'] as num?) ?? 100).toDouble(),
-      locked: isLocked,
+      name: (json['name'] as String?) ?? 'Avaliação',
+      itemType: (json['itemType'] as String?) ?? 'assign',
+      itemModule: json['itemModule'] as String?,
+      itemInstance: json['itemInstance'] as int?,
+      itemNumber: (json['itemNumber'] as int?) ?? 0,
+      gradeMax: ((json['gradeMax'] as num?) ?? 10).toDouble(),
     );
   }
 }
@@ -97,16 +100,18 @@ class MoodleSession {
     required this.userId,
     required this.fullname,
     this.serviceName = 'moodle_mobile_app',
+    this.availableFunctions = const {},
   });
 
   final String baseUrl;
   final String token;
   final int userId;
   final String fullname;
-
-  /// The Moodle external-service name used to obtain this token.
-  /// To update grades the service must include:
-  ///   mod_assign_save_grade  (for Tarefa/Assign items)
-  ///   core_grades_update_grades  (for other items)
   final String serviceName;
+
+  /// WS functions available in the current external service.
+  /// Populated from core_webservice_get_site_info at login.
+  final Set<String> availableFunctions;
+
+  bool hasFunction(String name) => availableFunctions.contains(name);
 }

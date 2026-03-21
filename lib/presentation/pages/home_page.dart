@@ -143,7 +143,14 @@ class _HomePageState extends State<HomePage> {
                   onPressed: widget.controller.isBusy ||
                           !widget.controller.canGrade
                       ? null
-                      : widget.controller.grade,
+                      : () {
+                          widget.controller.grade();
+                          final result = widget.controller.result;
+                          if (result != null &&
+                              widget.moodleController.isFullyConfigured) {
+                            _openAssignGrade(result);
+                          }
+                        },
                   icon: const Icon(Icons.done_all),
                   label: const Text('Corrigir'),
                 ),
@@ -176,20 +183,7 @@ class _HomePageState extends State<HomePage> {
                   content: widget.controller.studentSummary,
                 ),
                 const SizedBox(height: 20),
-                if (result != null) ...[
-                  _ResultCard(result: result),
-                  if (moodle.isFullyConfigured) ...[
-                    const SizedBox(height: 12),
-                    FilledButton.icon(
-                      onPressed: () => _openAssignGrade(result),
-                      icon: const Icon(Icons.send),
-                      label: const Text('Enviar nota ao Moodle'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.teal.shade700,
-                      ),
-                    ),
-                  ],
-                ],
+                if (result != null) _ResultCard(result: result),
               ],
             ),
           ),

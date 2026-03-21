@@ -28,6 +28,12 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Include only the two most common Android ABIs.
+        // Remove this block to support x86/x86_64 (emulators) at the cost of ~90 MB extra.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
@@ -41,4 +47,9 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // OpenCV 4.9.0 — bundled native libs, no extra SDK download needed
+    implementation("org.opencv:opencv:4.9.0")
 }

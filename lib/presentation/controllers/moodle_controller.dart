@@ -49,7 +49,7 @@ class MoodleController extends ChangeNotifier {
     if (selectedCourse != null && selectedGradeItem != null) {
       _loadStudents();
     } else if (selectedCourse != null) {
-      _loadGradeItems();
+      _loadAssignGradeColumns();
     } else {
       loadCourses();
     }
@@ -69,7 +69,7 @@ class MoodleController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final (token, userId, fullname) = await _service.login(
+      final (token, userId, fullname, fns) = await _service.login(
         baseUrl: baseUrl,
         username: username,
         password: password,
@@ -81,6 +81,7 @@ class MoodleController extends ChangeNotifier {
         userId: userId,
         fullname: fullname,
         serviceName: serviceName,
+        availableFunctions: fns,
       );
       await _store.saveSession(session!);
       courses = await _service.getCourses(
@@ -131,7 +132,7 @@ class MoodleController extends ChangeNotifier {
     gradeItems = [];
     notifyListeners();
     await _store.saveCourse(course);
-    await _loadGradeItems();
+    await _loadAssignGradeColumns();
   }
 
   Future<void> selectGradeItem(MoodleGradeItem item) async {
@@ -173,7 +174,7 @@ class MoodleController extends ChangeNotifier {
     }
   }
 
-  Future<void> _loadGradeItems() async {
+  Future<void> _loadAssignGradeColumns() async {
     final s = session;
     final c = selectedCourse;
     if (s == null || c == null) return;
@@ -181,16 +182,15 @@ class MoodleController extends ChangeNotifier {
     errorMessage = null;
     notifyListeners();
     try {
-      gradeItems = await _service.getGradeItems(
+      gradeItems = await _service.getAssignGradeColumns(
         baseUrl: s.baseUrl,
         token: s.token,
         courseId: c.id,
-        userId: s.userId,
       );
     } on MoodleException catch (e) {
       errorMessage = e.message;
     } catch (e) {
-      errorMessage = 'Erro ao carregar itens de nota: $e';
+      errorMessage = 'Erro ao carregar colunas de nota: $e';
     } finally {
       isLoading = false;
       notifyListeners();
@@ -207,9 +207,8 @@ class MoodleController extends ChangeNotifier {
     required int totalQuestions,
   }) async {
     final s = session;
-    final c = selectedCourse;
     final item = selectedGradeItem;
-    if (s == null || c == null || item == null) return false;
+    if (s == null || item == null) return false;
 
     isSubmitting = true;
     lastSubmitMessage = null;
@@ -220,7 +219,6 @@ class MoodleController extends ChangeNotifier {
       await _service.submitGrade(
         baseUrl: s.baseUrl,
         token: s.token,
-        courseId: c.id,
         item: item,
         studentId: studentId,
         grade: grade,
