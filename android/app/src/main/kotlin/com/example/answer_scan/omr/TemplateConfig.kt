@@ -29,15 +29,15 @@ object TemplateConfig {
     const val DOMINANCE_DELTA = 0.07
     const val GAP_RATIO = 1.55
 
-    const val MARKER_MIN_AREA_FRAC = 0.0005
-    const val MARKER_MAX_AREA_FRAC = 0.030
-    const val MARKER_MIN_SOLIDITY = 0.80
-    const val MARKER_MIN_DENSITY = 0.70
-    const val MARKER_MIN_ASPECT = 0.70
-    const val MARKER_MAX_ASPECT = 1.30
-    const val MARKER_CORNER_REGION_FRAC = 0.32
+    const val MARKER_MIN_AREA_FRAC = 0.0003
+    const val MARKER_MAX_AREA_FRAC = 0.040
+    const val MARKER_MIN_SOLIDITY = 0.72
+    const val MARKER_MIN_DENSITY = 0.55
+    const val MARKER_MIN_ASPECT = 0.60
+    const val MARKER_MAX_ASPECT = 1.40
+    const val MARKER_CORNER_REGION_FRAC = 0.35
 
-    const val MIN_SHARPNESS_VARIANCE = 35.0
-    const val MIN_TEMPLATE_AREA_FRAC = 0.20
-    const val MAX_OPPOSITE_SIDE_RATIO = 1.55
+    const val MIN_SHARPNESS_VARIANCE = 15.0
+    const val MIN_TEMPLATE_AREA_FRAC = 0.15
+    const val MAX_OPPOSITE_SIDE_RATIO = 1.70
 }

@@ -28,38 +28,67 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
+                if (!isOpenCvReady) {
+                    result.error(
+                        "OPENCV_INIT_FAILED",
+                        "OpenCV nao foi inicializado no Android.",
+                        null,
+                    )
+                    return@setMethodCallHandler
+                }
+
                 when (call.method) {
                     "scanSheet" -> {
-                        if (!isOpenCvReady) {
-                            result.error(
-                                "OPENCV_INIT_FAILED",
-                                "OpenCV nao foi inicializado no Android.",
-                                null,
-                            )
-                            return@setMethodCallHandler
-                        }
-
                         val imagePath = call.argument<String>("imagePath")
                         val debug = call.argument<Boolean>("debug") ?: false
                         if (imagePath.isNullOrBlank()) {
-                            result.error(
-                                "INVALID_ARG",
-                                "imagePath is required and must be non-empty",
-                                null,
-                            )
+                            result.error("INVALID_ARG", "imagePath is required", null)
                             return@setMethodCallHandler
                         }
 
                         scanExecutor.execute {
-                            val scanResult = templateScanner.scan(imagePath, debug)
-                            runOnUiThread {
-                                val success = scanResult["success"] as? Boolean ?: false
-                                if (success) {
-                                    result.success(scanResult)
-                                } else {
-                                    val error = scanResult["error"] as? String ?: "Scan failed"
-                                    result.error("SCAN_FAILED", error, scanResult)
+                            try {
+                                val scanResult = templateScanner.scan(imagePath, debug)
+                                runOnUiThread {
+                                    val success = scanResult["success"] as? Boolean ?: false
+                                    if (success) {
+                                        result.success(scanResult)
+                                    } else {
+                                        val error = scanResult["error"] as? String ?: "Scan failed"
+                                        result.error("SCAN_FAILED", error, scanResult)
+                                    }
                                 }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Uncaught exception in TemplateScanner", e)
+                                runOnUiThread {
+                                    result.error(
+                                        "SCAN_EXCEPTION",
+                                        e.message ?: "Erro interno no scanner nativo.",
+                                        null,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    "detectMarkersLive" -> {
+                        val yPlane    = call.argument<ByteArray>("yPlane")
+                        val width     = call.argument<Int>("width")
+                        val height    = call.argument<Int>("height")
+                        val rowStride = call.argument<Int>("rowStride")
+
+                        if (yPlane == null || width == null || height == null || rowStride == null) {
+                            result.error("INVALID_ARG", "yPlane, width, height, rowStride are required", null)
+                            return@setMethodCallHandler
+                        }
+
+                        scanExecutor.execute {
+                            try {
+                                val corners = templateScanner.detectMarkersLive(yPlane, width, height, rowStride)
+                                runOnUiThread { result.success(corners) }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "detectMarkersLive error: ${e.message}")
+                                runOnUiThread { result.success(null) }
                             }
                         }
                     }

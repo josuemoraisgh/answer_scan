@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/omr_capture_guide.dart';
+import '../../data/services/omr_native_channel.dart';
 
 class CameraCapturePage extends StatefulWidget {
   const CameraCapturePage({
@@ -23,6 +26,12 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 
   bool _takingPhoto = false;
 
+  // Live marker detection state
+  bool _markersFound = false;
+  bool _streamActive = false;
+  int _lastDetectionMs = 0;
+  bool _processingFrame = false;
+
   @override
   void initState() {
     super.initState();
@@ -30,48 +39,72 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       widget.camera,
       ResolutionPreset.high,
       enableAudio: false,
+      imageFormatGroup: ImageFormatGroup.yuv420,
     );
-    _initializeFuture = _cameraController.initialize();
+    _initializeFuture = _cameraController.initialize().then((_) {
+      if (mounted) _startLiveDetection();
+    });
+  }
+
+  void _startLiveDetection() {
+    if (_streamActive) return;
+    _streamActive = true;
+    _cameraController.startImageStream((CameraImage image) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (_processingFrame || now - _lastDetectionMs < 700) return;
+      _processingFrame = true;
+      _lastDetectionMs = now;
+
+      final plane = image.planes[0];
+      OmrNativeChannel.detectMarkersLive(
+        yPlane: plane.bytes,
+        width: image.width,
+        height: image.height,
+        rowStride: plane.bytesPerRow,
+      ).then((corners) {
+        if (!mounted) return;
+        setState(() {
+          _markersFound = corners != null;
+          _processingFrame = false;
+        });
+      }).catchError((_) {
+        _processingFrame = false;
+      });
+    });
   }
 
   @override
   void dispose() {
+    if (_streamActive) {
+      try {
+        _cameraController.stopImageStream();
+      } catch (_) {}
+    }
     _cameraController.dispose();
     super.dispose();
   }
 
   Future<void> _capture() async {
-    if (_takingPhoto) {
-      return;
-    }
-
-    setState(() {
-      _takingPhoto = true;
-    });
+    if (_takingPhoto) return;
+    setState(() => _takingPhoto = true);
 
     try {
+      // Stop stream before takePicture to avoid conflicts
+      if (_streamActive) {
+        await _cameraController.stopImageStream();
+        _streamActive = false;
+      }
       await _initializeFuture;
       final file = await _cameraController.takePicture();
-
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       Navigator.of(context).pop(file.path);
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Falha ao tirar foto. Tente novamente.')),
       );
     } finally {
-      if (mounted) {
-        setState(() {
-          _takingPhoto = false;
-        });
-      }
+      if (mounted) setState(() => _takingPhoto = false);
     }
   }
 
@@ -80,14 +113,12 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       builder: (context, constraints) {
         final sensorAspectRatio = _cameraController.value.aspectRatio;
         final isPortraitLayout = constraints.maxHeight > constraints.maxWidth;
-        final previewAspectRatio = isPortraitLayout
-            ? (1 / sensorAspectRatio)
-            : sensorAspectRatio;
+        final previewAspectRatio =
+            isPortraitLayout ? (1 / sensorAspectRatio) : sensorAspectRatio;
         final parentAspectRatio = constraints.maxWidth / constraints.maxHeight;
 
         double width;
         double height;
-
         if (parentAspectRatio > previewAspectRatio) {
           width = constraints.maxWidth;
           height = constraints.maxWidth / previewAspectRatio;
@@ -116,6 +147,11 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       body: FutureBuilder<void>(
         future: _initializeFuture,
         builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(
+              child: Text('Erro ao iniciar camera: ${snapshot.error}'),
+            );
+          }
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
           }
@@ -123,12 +159,16 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
           final preview = ClipRect(
             child: Stack(
               fit: StackFit.expand,
-              children: [_buildFullBleedPreview(), const _GuideOverlay()],
+              children: [
+                _buildFullBleedPreview(),
+                _GuideOverlay(markersFound: _markersFound),
+              ],
             ),
           );
 
           final captureButton = FloatingActionButton.large(
             onPressed: _takingPhoto ? null : _capture,
+            backgroundColor: _markersFound ? Colors.green : null,
             child: _takingPhoto
                 ? const CircularProgressIndicator()
                 : const Icon(Icons.camera_alt),
@@ -170,7 +210,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 }
 
 class _GuideOverlay extends StatelessWidget {
-  const _GuideOverlay();
+  const _GuideOverlay({required this.markersFound});
+
+  final bool markersFound;
 
   @override
   Widget build(BuildContext context) {
@@ -192,7 +234,9 @@ class _GuideOverlay extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                CustomPaint(painter: const _GuidePainter()),
+                CustomPaint(
+                  painter: _GuidePainter(markersFound: markersFound),
+                ),
                 Align(
                   alignment: Alignment.bottomCenter,
                   child: Container(
@@ -205,10 +249,17 @@ class _GuideOverlay extends StatelessWidget {
                       color: Colors.black.withValues(alpha: 0.65),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Text(
-                      'Alinhe os 4 marcadores pretos com os cantos do guia.',
+                    child: Text(
+                      markersFound
+                          ? 'Marcadores detectados! Pressione para capturar.'
+                          : 'Alinhe os 4 marcadores pretos com os cantos do guia.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white),
+                      style: TextStyle(
+                        color: markersFound ? Colors.greenAccent : Colors.white,
+                        fontWeight: markersFound
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
                     ),
                   ),
                 ),
@@ -222,19 +273,23 @@ class _GuideOverlay extends StatelessWidget {
 }
 
 class _GuidePainter extends CustomPainter {
-  const _GuidePainter();
+  const _GuidePainter({required this.markersFound});
+
+  final bool markersFound;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final borderColor = markersFound ? Colors.greenAccent : Colors.white;
+
     final borderPaint = Paint()
-      ..color = Colors.white
+      ..color = borderColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5;
+      ..strokeWidth = markersFound ? 3.5 : 2.5;
     final markerPaint = Paint()
       ..color = Colors.black.withValues(alpha: 0.85)
       ..style = PaintingStyle.fill;
     final answerAreaPaint = Paint()
-      ..color = Colors.white70
+      ..color = markersFound ? Colors.greenAccent.withValues(alpha: 0.6) : Colors.white70
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
 
@@ -267,6 +322,15 @@ class _GuidePainter extends CustomPainter {
 
     for (final rect in markers) {
       canvas.drawRect(rect, markerPaint);
+      if (markersFound) {
+        canvas.drawRect(
+          rect.inflate(3),
+          Paint()
+            ..color = Colors.greenAccent
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2,
+        );
+      }
     }
 
     final answerArea = Rect.fromLTWH(
@@ -279,5 +343,5 @@ class _GuidePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(_GuidePainter old) => old.markersFound != markersFound;
 }

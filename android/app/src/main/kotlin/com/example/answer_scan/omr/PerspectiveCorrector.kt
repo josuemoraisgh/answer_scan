@@ -10,36 +10,39 @@ import org.opencv.imgproc.Imgproc
 
 class PerspectiveCorrector {
 
-    fun warp(gray: Mat, srcCorners: List<Point>): Mat {
-        require(srcCorners.size == 4) { "srcCorners must have exactly 4 points" }
+    /**
+     * Warps [src] into [dst] using the perspective transform defined by the
+     * four [srcCorners] (TL, TR, BL, BR) mapping to the corners of a
+     * [TemplateConfig.WARP_W] × [TemplateConfig.WARP_H] output image.
+     *
+     * [dst] may be any Mat (including an empty one); it is resized internally.
+     * The caller is responsible for releasing [dst].
+     */
+    fun warp(src: Mat, srcCorners: List<Point>, dst: Mat) {
+        require(srcCorners.size == 4) { "srcCorners must have exactly 4 points (TL, TR, BL, BR)" }
 
         val warpW = TemplateConfig.WARP_W.toDouble()
         val warpH = TemplateConfig.WARP_H.toDouble()
 
-        val src = MatOfPoint2f(*srcCorners.toTypedArray())
-        val dst = MatOfPoint2f(
-            Point(0.0, 0.0),
-            Point(warpW - 1.0, 0.0),
-            Point(0.0, warpH - 1.0),
-            Point(warpW - 1.0, warpH - 1.0),
+        val srcMat = MatOfPoint2f(*srcCorners.toTypedArray())
+        val dstMat = MatOfPoint2f(
+            Point(0.0,        0.0),
+            Point(warpW - 1, 0.0),
+            Point(0.0,        warpH - 1),
+            Point(warpW - 1, warpH - 1),
         )
 
-        val homography = Imgproc.getPerspectiveTransform(src, dst)
-        val warped = Mat()
+        val H = Imgproc.getPerspectiveTransform(srcMat, dstMat)
         Imgproc.warpPerspective(
-            gray,
-            warped,
-            homography,
+            src, dst, H,
             Size(warpW, warpH),
             Imgproc.INTER_LINEAR,
             Core.BORDER_CONSTANT,
             Scalar(255.0),
         )
 
-        src.release()
-        dst.release()
-        homography.release()
-
-        return warped
+        srcMat.release()
+        dstMat.release()
+        H.release()
     }
 }

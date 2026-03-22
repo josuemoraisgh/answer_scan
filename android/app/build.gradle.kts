@@ -41,6 +41,8 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
@@ -52,4 +54,6 @@ flutter {
 dependencies {
     // OpenCV 4.9.0 — bundled native libs, no extra SDK download needed
     implementation("org.opencv:opencv:4.9.0")
+    // EXIF rotation support for gallery images
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
 }

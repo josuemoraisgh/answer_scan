@@ -34,6 +34,37 @@ class OmrNativeChannel {
     return _invoke(imagePath, debug: debug);
   }
 
+  /// Fast live detection: passes a raw Y-plane from a camera frame to native
+  /// and returns the 4 template corner points (TL, TR, BL, BR) in sensor
+  /// pixel coordinates, or null when no valid marker set is detected.
+  static Future<List<List<double>>?> detectMarkersLive({
+    required Uint8List yPlane,
+    required int width,
+    required int height,
+    required int rowStride,
+  }) async {
+    try {
+      final raw = await _channel.invokeMethod<List<dynamic>>(
+        'detectMarkersLive',
+        {
+          'yPlane': yPlane,
+          'width': width,
+          'height': height,
+          'rowStride': rowStride,
+        },
+      );
+      if (raw == null || raw.length < 8) return null;
+      // raw is [x0,y0, x1,y1, x2,y2, x3,y3]
+      return List.generate(4, (i) {
+        final x = (raw[i * 2] as num).toDouble();
+        final y = (raw[i * 2 + 1] as num).toDouble();
+        return [x, y];
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ── Internal ───────────────────────────────────────────────────────────────
 
   static Future<OmrScanResult> _invoke(
